@@ -9,3 +9,15 @@
 </svelte:head>
 
 {@render children()}
+
+<style>
+	:global(*, *::before, *::after) {
+		box-sizing: border-box;
+	}
+	:global(body) {
+		margin: 0;
+		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+		color: #0f172a;
+		line-height: 1.6;
+	}
+</style>
