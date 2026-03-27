@@ -1,34 +1,29 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { Spring } from 'svelte/motion';
-	import { tick } from 'svelte';
-	import { scale } from 'svelte/transition';
+	import { NostrPool, generateKeypair } from '$lib/nostr';
+	import { decryptConfig } from '$lib/crypto';
 	import { randomName } from '$lib/names';
+	import { DEFAULT_CONFIG, type FormConfig, type SwipeDirection } from '$lib/types';
 
-	type Phase = 'loading' | 'naming' | 'surveying' | 'done' | 'error';
-	type Direction = 'left' | 'right' | 'up' | 'down';
-
-	interface FormConfig {
-		formTitle?: string;
-		swipeLeftLabel?: string;
-		swipeRightLabel?: string;
-		swipeUpLabel?: string;
-		swipeDownLabel?: string;
-	}
+	type Phase = 'loading' | 'surveying' | 'done' | 'error';
 
 	let phase: Phase = $state('loading');
 	let errorMsg = $state('');
-	let config: FormConfig = $state({});
-	let questions: string[] = $state([]);
-	let userName = $state('');
+	let config: FormConfig = $state({ ...DEFAULT_CONFIG });
 	let currentIndex = $state(0);
 	let cardShown = $state(true);
-	let cardInteracting = $state(false);
-	let swipeDir: Direction | null = $state(null);
+	let swipeDir: SwipeDirection | null = $state(null);
 	let hintVisible = $state(true);
 
 	const sessionId = crypto.randomUUID();
-	let gasUrl = '';
+	const name = randomName();
+	const { privkeyHex: ephemeralPrivkey, pubkey: ephemeralPubkey } = generateKeypair();
+	void ephemeralPubkey; // used only for signing events inside NostrPool
+
+	let serverPubkey = '';
+	let configAesKey = '';
+	let pool: NostrPool | null = null;
 
 	const motion = new Spring(
 		{ x: 0, y: 0, rotation: 0, opacity: 1 },
@@ -37,6 +32,7 @@
 
 	let dragStartX = 0;
 	let dragStartY = 0;
+	let dragging = false;
 
 	const SWIPE_THRESHOLD = 90;
 	const FLY = 1100;
@@ -45,23 +41,21 @@
 
 	onMount(() => {
 		const hash = window.location.hash.slice(1);
-		if (!hash) {
-			errorMsg = 'No form URL in this link. Make sure you used a valid Swack share link.';
+		const parts = hash.split('_');
+		if (parts.length < 2) {
+			errorMsg = 'Invalid share link.';
 			phase = 'error';
 			return;
 		}
-		try {
-			gasUrl = atob(hash);
-		} catch {
-			errorMsg = 'This link appears to be malformed.';
-			phase = 'error';
-			return;
-		}
+		serverPubkey = parts[0];
+		configAesKey = parts.slice(1).join('_');
 
-		loadForm();
 		window.addEventListener('keydown', handleKeyDown);
 		window.addEventListener('mousemove', handleMouseMove);
 		window.addEventListener('mouseup', handleMouseUp);
+
+		loadForm();
+
 		return () => {
 			window.removeEventListener('keydown', handleKeyDown);
 			window.removeEventListener('mousemove', handleMouseMove);
@@ -69,499 +63,468 @@
 		};
 	});
 
+	onDestroy(() => {
+		pool?.destroy();
+	});
+
 	async function loadForm() {
-		try {
-			const res = await fetch(gasUrl);
-			if (!res.ok) throw new Error(`HTTP ${res.status}`);
-			const data = await res.json();
-			config = (data.config as FormConfig) ?? {};
-			questions = (data.questions as string[]) ?? [];
-			if (questions.length === 0) {
-				errorMsg = 'This form has no questions.';
+		pool = new NostrPool();
+		await pool.connect();
+
+		const unsub = pool.subscribeConfig(serverPubkey, async (encryptedContent) => {
+			try {
+				const json = await decryptConfig(encryptedContent, configAesKey);
+				config = JSON.parse(json);
+				if (config.questions.length === 0) {
+					errorMsg = 'This form has no questions yet.';
+					phase = 'error';
+					return;
+				}
+				phase = 'surveying';
+			} catch {
+				errorMsg = 'Could not decrypt form config. The link may be malformed.';
 				phase = 'error';
-				return;
 			}
-			phase = 'naming';
-		} catch {
-			errorMsg = 'Could not load the form. The URL may be invalid or the script is not deployed.';
-			phase = 'error';
+			unsub();
+		});
+
+		// timeout if no config arrives
+		setTimeout(() => {
+			if (phase === 'loading') {
+				errorMsg = 'Could not load form. The relay pool may be unreachable, or the form may not exist.';
+				phase = 'error';
+			}
+		}, 12000);
+	}
+
+	function directionFromOffset(dx: number, dy: number): SwipeDirection | null {
+		const ax = Math.abs(dx);
+		const ay = Math.abs(dy);
+		if (ax < SWIPE_THRESHOLD && ay < SWIPE_THRESHOLD) return null;
+		if (ax >= ay) return dx > 0 ? 'Right' : 'Left';
+		return dy > 0 ? 'Down' : 'Up';
+	}
+
+	function highlightFor(dir: SwipeDirection | null): { left: number; right: number; up: number; down: number } {
+		const mk = (d: SwipeDirection) => {
+			const { x, y } = motion.current;
+			if (dir !== d) return 0;
+			if (d === 'Left' || d === 'Right') return Math.min(Math.abs(x) / HL_DIV, MAX_HL);
+			return Math.min(Math.abs(y) / HL_DIV, MAX_HL);
+		};
+		return { left: mk('Left'), right: mk('Right'), up: mk('Up'), down: mk('Down') };
+	}
+
+	async function swipe(dir: SwipeDirection) {
+		if (!cardShown || phase !== 'surveying') return;
+		hintVisible = false;
+		swipeDir = dir;
+
+		const targets: Record<SwipeDirection, { x: number; y: number; rotation: number }> = {
+			Left: { x: -FLY, y: 0, rotation: -20 },
+			Right: { x: FLY, y: 0, rotation: 20 },
+			Up: { x: 0, y: -FLY, rotation: 0 },
+			Down: { x: 0, y: FLY, rotation: 0 }
+		};
+
+		const { x, y, rotation } = targets[dir];
+		motion.set({ x, y, rotation, opacity: 0 });
+		cardShown = false;
+
+		await submitAnswer(dir);
+
+		if (currentIndex + 1 >= config.questions.length) {
+			setTimeout(() => { phase = 'done'; }, 400);
+			return;
 		}
+
+		setTimeout(() => {
+			currentIndex++;
+			motion.set({ x: 0, y: 0, rotation: 0, opacity: 1 }, { hard: true });
+			swipeDir = null;
+			cardShown = true;
+		}, 400);
 	}
 
-	function startSurvey() {
-		const name = userName.trim();
-		if (!name) return;
-		userName = name;
-		phase = 'surveying';
-	}
-
-	function labelFor(dir: Direction): string {
-		return (
-			{
-				left: config.swipeLeftLabel,
-				right: config.swipeRightLabel,
-				up: config.swipeUpLabel,
-				down: config.swipeDownLabel
-			}[dir] ?? ''
-		);
-	}
-
-	function isActive(dir: Direction): boolean {
-		return !!labelFor(dir);
+	async function submitAnswer(answer: SwipeDirection) {
+		if (!pool) return;
+		const payload = JSON.stringify({
+			sessionId,
+			name,
+			qIndex: currentIndex,
+			answer,
+			timestamp: Date.now()
+		});
+		try {
+			await pool.publishAnswer(serverPubkey, payload, ephemeralPrivkey);
+		} catch {
+			// best-effort — continue survey even if publish fails
+		}
 	}
 
 	function handleKeyDown(e: KeyboardEvent) {
-		if (phase !== 'surveying' || cardInteracting) return;
-		const map: Record<string, Direction> = {
-			ArrowLeft: 'left', a: 'left',
-			ArrowRight: 'right', d: 'right',
-			ArrowUp: 'up', w: 'up',
-			ArrowDown: 'down', s: 'down'
+		const map: Record<string, SwipeDirection> = {
+			ArrowLeft: 'Left', a: 'Left',
+			ArrowRight: 'Right', d: 'Right',
+			ArrowUp: 'Up', w: 'Up',
+			ArrowDown: 'Down', s: 'Down'
 		};
 		const dir = map[e.key];
-		if (dir && isActive(dir)) doSwipe(dir);
+		if (dir) swipe(dir);
 	}
 
-	function beginDrag(x: number, y: number) {
-		if (phase !== 'surveying' || cardInteracting) return;
-		cardInteracting = true;
-		dragStartX = x;
-		dragStartY = y;
-	}
-
-	function moveDrag(x: number, y: number) {
-		if (!cardInteracting || phase !== 'surveying') return;
-		const dx = x - dragStartX;
-		const dy = y - dragStartY;
-		motion.target = { x: dx, y: dy, rotation: dx * 0.07, opacity: 1 };
-		swipeDir =
-			Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : dy > 0 ? 'down' : 'up';
-	}
-
-	function endDrag(x: number, y: number) {
-		if (!cardInteracting || phase !== 'surveying') return;
-		const dx = x - dragStartX;
-		const dy = y - dragStartY;
-		let dir: Direction | null = null;
-		if (Math.abs(dx) > SWIPE_THRESHOLD && Math.abs(dx) >= Math.abs(dy))
-			dir = dx > 0 ? 'right' : 'left';
-		else if (Math.abs(dy) > SWIPE_THRESHOLD && Math.abs(dy) > Math.abs(dx))
-			dir = dy > 0 ? 'down' : 'up';
-
-		if (dir && isActive(dir)) {
-			doSwipe(dir);
-		} else {
-			motion.set({ x: 0, y: 0, rotation: 0, opacity: 1 });
-			cardInteracting = false;
-			swipeDir = null;
-		}
+	function handleMouseDown(e: MouseEvent) {
+		dragStartX = e.clientX;
+		dragStartY = e.clientY;
+		dragging = true;
 	}
 
 	function handleMouseMove(e: MouseEvent) {
-		moveDrag(e.clientX, e.clientY);
+		if (!dragging) return;
+		const dx = e.clientX - dragStartX;
+		const dy = e.clientY - dragStartY;
+		const rot = dx * 0.08;
+		motion.set({ x: dx, y: dy, rotation: rot, opacity: 1 });
+		swipeDir = directionFromOffset(dx, dy);
 	}
+
 	function handleMouseUp(e: MouseEvent) {
-		endDrag(e.clientX, e.clientY);
-	}
-
-	function doSwipe(dir: Direction) {
-		hintVisible = false;
-		cardInteracting = true;
-		const targets = {
-			left: { x: -FLY, y: 0, rotation: -20 },
-			right: { x: FLY, y: 0, rotation: 20 },
-			up: { x: 0, y: -FLY, rotation: 0 },
-			down: { x: 0, y: FLY, rotation: 0 }
-		};
-		motion.set({ ...targets[dir], opacity: 0 }).then(() => recordAnswer(dir));
-	}
-
-	async function recordAnswer(dir: Direction) {
-		fetch(gasUrl, {
-			method: 'POST',
-			headers: { 'Content-Type': 'text/plain' },
-			body: JSON.stringify({ sessionId, userName, question: questions[currentIndex], answer: dir })
-		}).catch(() => {});
-
-		if (currentIndex < questions.length - 1) {
-			currentIndex++;
-			cardShown = false;
-			await tick();
-			motion.set({ x: 0, y: 0, rotation: 0, opacity: 1 }, { instant: true });
-			cardInteracting = false;
-			swipeDir = null;
-			cardShown = true;
+		if (!dragging) return;
+		dragging = false;
+		const dx = e.clientX - dragStartX;
+		const dy = e.clientY - dragStartY;
+		const dir = directionFromOffset(dx, dy);
+		if (dir) {
+			swipe(dir);
 		} else {
-			phase = 'done';
+			motion.set({ x: 0, y: 0, rotation: 0, opacity: 1 });
+			swipeDir = null;
 		}
 	}
 
-	function hlOpacity(dir: Direction): number {
-		if (!cardInteracting || swipeDir !== dir) return 0;
-		const { x, y } = motion.current;
-		switch (dir) {
-			case 'left': return Math.min(MAX_HL, -x / HL_DIV);
-			case 'right': return Math.min(MAX_HL, x / HL_DIV);
-			case 'up': return Math.min(MAX_HL, -y / HL_DIV);
-			case 'down': return Math.min(MAX_HL, y / HL_DIV);
+	function handleTouchStart(e: TouchEvent) {
+		const t = e.touches[0];
+		dragStartX = t.clientX;
+		dragStartY = t.clientY;
+		dragging = true;
+	}
+
+	function handleTouchMove(e: TouchEvent) {
+		if (!dragging) return;
+		const t = e.touches[0];
+		const dx = t.clientX - dragStartX;
+		const dy = t.clientY - dragStartY;
+		motion.set({ x: dx, y: dy, rotation: dx * 0.08, opacity: 1 });
+		swipeDir = directionFromOffset(dx, dy);
+	}
+
+	function handleTouchEnd(e: TouchEvent) {
+		if (!dragging) return;
+		dragging = false;
+		const t = e.changedTouches[0];
+		const dx = t.clientX - dragStartX;
+		const dy = t.clientY - dragStartY;
+		const dir = directionFromOffset(dx, dy);
+		if (dir) {
+			swipe(dir);
+		} else {
+			motion.set({ x: 0, y: 0, rotation: 0, opacity: 1 });
+			swipeDir = null;
 		}
 	}
+
+	const hl = $derived(highlightFor(swipeDir));
 </script>
 
 <svelte:head>
-	<title>{config.formTitle ?? 'Survey'} — Swack</title>
+	<title>Swack</title>
 </svelte:head>
 
-<div class="fill-page">
+<div class="page">
 	{#if phase === 'loading'}
-		<div class="center-screen">
-			<div class="spinner"></div>
-			<p>Loading form…</p>
-		</div>
+		<div class="center"><span class="muted">Connecting to relay pool…</span></div>
+
 	{:else if phase === 'error'}
-		<div class="center-screen">
-			<p class="error-msg">{errorMsg}</p>
-			<a href="/" class="btn-link">← Back to Swack</a>
-		</div>
-	{:else if phase === 'naming'}
-		<div class="center-screen card-panel naming-screen" in:scale={{ duration: 250, start: 0.95 }}>
-			<h1>{config.formTitle ?? 'Survey'}</h1>
-			<p class="sub">{questions.length} question{questions.length !== 1 ? 's' : ''} · swipe to answer</p>
-			<div class="name-row">
-				<input
-					type="text"
-					bind:value={userName}
-					placeholder="Your name"
-					maxlength="40"
-					onkeydown={(e) => e.key === 'Enter' && startSurvey()}
-					autofocus
-				/>
-				<button class="btn-random" title="Random name" onclick={() => (userName = randomName())}>
-					↺
-				</button>
+		<div class="center">
+			<div class="error-box">
+				<p>{errorMsg}</p>
+				<a href="/">← Home</a>
 			</div>
-			<button class="btn-start" onclick={startSurvey} disabled={!userName.trim()}>Start</button>
 		</div>
-	{:else if phase === 'surveying'}
-		<div class="hl hl-left" style="opacity: {hlOpacity('left')}"></div>
-		<div class="hl hl-right" style="opacity: {hlOpacity('right')}"></div>
-		<div class="hl hl-up" style="opacity: {hlOpacity('up')}"></div>
-		<div class="hl hl-down" style="opacity: {hlOpacity('down')}"></div>
 
-		<div class="swipe-layout">
-			<div class="dir-hints">
-				{#each (['up', 'left', 'right', 'down'] as Direction[]) as dir}
-					{#if isActive(dir)}
-						<div class="dir-hint hint-{dir}" class:hint-active={swipeDir === dir && cardInteracting}>
-							{dir === 'left' ? '← ' : dir === 'up' ? '↑ ' : ''}{labelFor(dir)}{dir === 'right' ? ' →' : dir === 'down' ? ' ↓' : ''}
-						</div>
-					{/if}
-				{/each}
-			</div>
-
-			{#if cardShown}
-				<div
-					class="card"
-					style="transform: translate({motion.current.x}px, {motion.current.y}px) rotate({motion.current.rotation}deg); opacity: {motion.current.opacity};"
-					in:scale={{ duration: 280, start: 0.88 }}
-					ontouchstart={(e) => beginDrag(e.touches[0].clientX, e.touches[0].clientY)}
-					ontouchmove={(e) => moveDrag(e.touches[0].clientX, e.touches[0].clientY)}
-					ontouchend={(e) => endDrag(e.changedTouches[0].clientX, e.changedTouches[0].clientY)}
-					onmousedown={(e) => beginDrag(e.clientX, e.clientY)}
-					role="button"
-					tabindex="0"
-				>
-					{#each (['left', 'right', 'up', 'down'] as Direction[]) as dir}
-						{#if isActive(dir)}
-							<div class="stamp stamp-{dir}" style="opacity: {hlOpacity(dir)}">
-								{labelFor(dir)}
-							</div>
-						{/if}
-					{/each}
-
-					<p class="question-count">{currentIndex + 1} / {questions.length}</p>
-					<p class="question-text">{questions[currentIndex]}</p>
-				</div>
-			{/if}
-
-			<div class="progress-track">
-				<div class="progress-fill" style="width: {((currentIndex + 1) / questions.length) * 100}%"></div>
-			</div>
-
-			{#if hintVisible}
-				<p class="swipe-hint">swipe or use arrow keys</p>
-			{/if}
-		</div>
 	{:else if phase === 'done'}
-		<div class="center-screen card-panel done-screen" in:scale={{ duration: 300, start: 0.9 }}>
-			<div class="done-icon">✓</div>
-			<h2>All done!</h2>
-			<p>Your responses have been recorded. Thank you, {userName}!</p>
+		<div class="center">
+			<div class="done-box">
+				<div class="done-icon">✓</div>
+				<h2>All done!</h2>
+				<p class="muted">Your answers have been submitted.</p>
+			</div>
+		</div>
+
+	{:else if phase === 'surveying'}
+		<div class="survey">
+			<!-- direction labels -->
+			<div class="label left" style="opacity: {hl.left}">{config.swipeLeftLabel}</div>
+			<div class="label right" style="opacity: {hl.right}">{config.swipeRightLabel}</div>
+			<div class="label up" style="opacity: {hl.up}">{config.swipeUpLabel}</div>
+			<div class="label down" style="opacity: {hl.down}">{config.swipeDownLabel}</div>
+
+			<div class="card-area">
+				{#if cardShown}
+					<div
+						class="card"
+						style="transform: translate({motion.current.x}px, {motion.current.y}px) rotate({motion.current.rotation}deg); opacity: {motion.current.opacity};"
+						onmousedown={handleMouseDown}
+						ontouchstart={handleTouchStart}
+						ontouchmove={handleTouchMove}
+						ontouchend={handleTouchEnd}
+						role="button"
+						tabindex="0"
+					>
+						<!-- stamp overlays -->
+						{#if swipeDir === 'Right'}
+							<div class="stamp stamp-yes" style="opacity: {hl.right}">{config.swipeRightLabel}</div>
+						{:else if swipeDir === 'Left'}
+							<div class="stamp stamp-no" style="opacity: {hl.left}">{config.swipeLeftLabel}</div>
+						{:else if swipeDir === 'Up'}
+							<div class="stamp stamp-up" style="opacity: {hl.up}">{config.swipeUpLabel}</div>
+						{:else if swipeDir === 'Down'}
+							<div class="stamp stamp-down" style="opacity: {hl.down}">{config.swipeDownLabel}</div>
+						{/if}
+
+						<p class="question">{config.questions[currentIndex]}</p>
+
+						{#if hintVisible}
+							<p class="hint">Swipe or use arrow keys</p>
+						{/if}
+					</div>
+				{/if}
+			</div>
+
+			<div class="progress">
+				{currentIndex + 1} / {config.questions.length}
+			</div>
+
+			<div class="btn-row">
+				<button class="dir-btn left-btn" onclick={() => swipe('Left')}>{config.swipeLeftLabel}</button>
+				<button class="dir-btn up-btn" onclick={() => swipe('Up')}>{config.swipeUpLabel}</button>
+				<button class="dir-btn down-btn" onclick={() => swipe('Down')}>{config.swipeDownLabel}</button>
+				<button class="dir-btn right-btn" onclick={() => swipe('Right')}>{config.swipeRightLabel}</button>
+			</div>
 		</div>
 	{/if}
 </div>
 
 <style>
-	:global(body) {
-		background: #f0f2f5;
-	}
-
-	.fill-page {
-		position: fixed;
-		inset: 0;
+	.page {
+		min-height: 100dvh;
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		overflow: hidden;
 	}
 
-	.center-screen {
+	.center {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		flex: 1;
+	}
+
+	.muted {
+		color: var(--text-muted);
+	}
+
+	.error-box {
+		text-align: center;
+		max-width: 400px;
+		padding: 2rem;
+	}
+
+	.done-box {
+		text-align: center;
+	}
+
+	.done-icon {
+		font-size: 3rem;
+		color: var(--success);
+		margin-bottom: 0.5rem;
+	}
+
+	.done-box h2 {
+		margin: 0 0 0.5rem;
+		font-size: 1.5rem;
+	}
+
+	.survey {
+		position: relative;
+		width: 100%;
+		max-width: 420px;
+		height: 100dvh;
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: 1rem;
-		text-align: center;
-		padding: 1.5rem;
-		max-width: 420px;
-		width: 100%;
-	}
-
-	.card-panel {
-		background: white;
-		border-radius: 20px;
-		box-shadow: 0 8px 30px rgba(0, 0, 0, 0.1);
-		padding: 2.5rem 2rem;
-	}
-
-	.spinner {
-		width: 40px;
-		height: 40px;
-		border: 3px solid #e2e8f0;
-		border-top-color: #2563eb;
-		border-radius: 50%;
-		animation: spin 0.8s linear infinite;
-	}
-
-	@keyframes spin {
-		to { transform: rotate(360deg); }
-	}
-
-	.error-msg { color: #dc2626; margin: 0; }
-
-	.btn-link {
-		color: #2563eb;
-		text-decoration: none;
-		font-size: 0.9375rem;
-	}
-
-	.btn-link:hover { text-decoration: underline; }
-
-	.naming-screen h1 {
-		font-size: 1.5rem;
-		font-weight: 700;
-		margin: 0 0 0.25rem;
-	}
-
-	.sub {
-		font-size: 0.875rem;
-		color: #94a3b8;
-		margin: 0 0 1.75rem;
-	}
-
-	.name-row {
-		display: flex;
-		gap: 0.5rem;
-		width: 100%;
-		margin-bottom: 1rem;
-	}
-
-	.name-row input {
-		flex: 1;
-		padding: 0.625rem 0.875rem;
-		border: 1.5px solid #e2e8f0;
-		border-radius: 10px;
-		font-size: 1rem;
-		color: #0f172a;
-		background: #f8fafc;
-		outline: none;
-		transition: border-color 0.15s;
-	}
-
-	.name-row input:focus {
-		border-color: #2563eb;
-		background: white;
-	}
-
-	.btn-random {
-		width: 42px;
-		height: 42px;
-		border-radius: 10px;
-		border: 1.5px solid #e2e8f0;
-		background: #f8fafc;
-		font-size: 1.2rem;
-		cursor: pointer;
-		display: flex;
-		align-items: center;
 		justify-content: center;
-		transition: background 0.15s;
-		flex-shrink: 0;
+		gap: 1.5rem;
+		padding: 2rem 1rem;
+		user-select: none;
 	}
 
-	.btn-random:hover { background: #e2e8f0; }
-
-	.btn-start {
-		width: 100%;
-		padding: 0.75rem;
-		background: #2563eb;
-		color: white;
-		border: none;
-		border-radius: 10px;
-		font-size: 1rem;
-		font-weight: 600;
-		cursor: pointer;
-		transition: background 0.15s, opacity 0.15s;
-	}
-
-	.btn-start:hover:not(:disabled) { background: #1d4ed8; }
-	.btn-start:disabled { opacity: 0.45; cursor: not-allowed; }
-
-	.hl {
-		position: fixed;
+	.label {
+		position: absolute;
+		font-size: 1.25rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.1em;
 		pointer-events: none;
-		z-index: 5;
 		transition: opacity 0.1s;
 	}
 
-	.hl-left { inset: 0 auto 0 0; width: 35%; background: linear-gradient(to right, rgba(239, 68, 68, 0.45), transparent); }
-	.hl-right { inset: 0 0 0 auto; width: 35%; background: linear-gradient(to left, rgba(34, 197, 94, 0.45), transparent); }
-	.hl-up { inset: 0 0 auto 0; height: 35%; background: linear-gradient(to bottom, rgba(59, 130, 246, 0.45), transparent); }
-	.hl-down { inset: auto 0 0 0; height: 35%; background: linear-gradient(to top, rgba(234, 179, 8, 0.45), transparent); }
+	.label.left {
+		left: 1rem;
+		top: 50%;
+		transform: translateY(-50%);
+		color: var(--danger);
+	}
 
-	.swipe-layout {
+	.label.right {
+		right: 1rem;
+		top: 50%;
+		transform: translateY(-50%);
+		color: var(--success);
+	}
+
+	.label.up {
+		top: 1.5rem;
+		left: 50%;
+		transform: translateX(-50%);
+		color: var(--info);
+	}
+
+	.label.down {
+		bottom: 5rem;
+		left: 50%;
+		transform: translateX(-50%);
+		color: var(--warning);
+	}
+
+	.card-area {
 		position: relative;
+		width: 100%;
+		height: 340px;
 		display: flex;
-		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		width: 100%;
-		height: 100%;
-		z-index: 10;
 	}
-
-	.dir-hints {
-		position: absolute;
-		inset: 0;
-		pointer-events: none;
-	}
-
-	.dir-hint {
-		position: absolute;
-		font-size: 0.8125rem;
-		font-weight: 600;
-		color: #94a3b8;
-		letter-spacing: 0.03em;
-		text-transform: uppercase;
-		transition: color 0.15s;
-		white-space: nowrap;
-	}
-
-	.hint-up    { top: 10%;    left: 50%; translate: -50% 0; }
-	.hint-down  { bottom: 14%; left: 50%; translate: -50% 0; }
-	.hint-left  { left: 4%;    top: 50%;  translate: 0 -50%; }
-	.hint-right { right: 4%;   top: 50%;  translate: 0 -50%; }
-
-	.dir-hint.hint-active { color: #0f172a; }
 
 	.card {
-		position: relative;
-		width: min(88vw, 420px);
-		height: min(62vh, 380px);
-		background: white;
-		border-radius: 22px;
-		box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
+		position: absolute;
+		width: 100%;
+		max-width: 360px;
+		min-height: 220px;
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: 16px;
+		padding: 2rem;
+		cursor: grab;
+		touch-action: none;
 		display: flex;
 		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		padding: 2rem 2rem 2.5rem;
 		text-align: center;
-		cursor: grab;
-		user-select: none;
-		touch-action: none;
-		will-change: transform;
+		box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
 	}
 
-	.card:active { cursor: grabbing; }
+	.card:active {
+		cursor: grabbing;
+	}
 
-	.question-count {
-		position: absolute;
-		top: 1.25rem;
-		right: 1.5rem;
+	.question {
+		font-size: 1.25rem;
+		font-weight: 500;
+		line-height: 1.5;
+		margin: 0 0 1rem;
+	}
+
+	.hint {
 		font-size: 0.8125rem;
-		color: #94a3b8;
-		margin: 0;
-	}
-
-	.question-text {
-		font-size: clamp(1.1rem, 3.5vw, 1.5rem);
-		font-weight: 600;
-		line-height: 1.35;
+		color: var(--text-muted);
 		margin: 0;
 	}
 
 	.stamp {
 		position: absolute;
-		font-size: 1.125rem;
+		top: 1rem;
+		padding: 0.25rem 0.75rem;
+		border-radius: 4px;
+		font-size: 1rem;
 		font-weight: 800;
-		letter-spacing: 0.05em;
 		text-transform: uppercase;
-		border-width: 3px;
-		border-style: solid;
-		border-radius: 6px;
-		padding: 0.2em 0.6em;
-		transition: opacity 0.05s;
+		letter-spacing: 0.1em;
 		pointer-events: none;
 	}
 
-	.stamp-left  { top: 1.5rem; right: 1.5rem; color: #ef4444; border-color: #ef4444; transform: rotate(12deg); }
-	.stamp-right { top: 1.5rem; left: 1.5rem;  color: #22c55e; border-color: #22c55e; transform: rotate(-12deg); }
-	.stamp-up    { bottom: 1.5rem; left: 50%;  color: #3b82f6; border-color: #3b82f6; transform: translateX(-50%); }
-	.stamp-down  { top: 1.5rem;    left: 50%;  color: #eab308; border-color: #eab308; transform: translateX(-50%); }
-
-	.progress-track {
-		width: min(88vw, 420px);
-		height: 5px;
-		background: #e2e8f0;
-		border-radius: 99px;
-		overflow: hidden;
-		margin-top: 1.25rem;
+	.stamp-yes {
+		right: 1rem;
+		color: var(--success);
+		border: 3px solid var(--success);
+		transform: rotate(15deg);
 	}
 
-	.progress-fill {
-		height: 100%;
-		background: #2563eb;
-		transition: width 0.35s ease;
+	.stamp-no {
+		left: 1rem;
+		color: var(--danger);
+		border: 3px solid var(--danger);
+		transform: rotate(-15deg);
 	}
 
-	.swipe-hint {
-		margin-top: 0.875rem;
+	.stamp-up {
+		top: 1rem;
+		left: 50%;
+		transform: translateX(-50%);
+		color: var(--info);
+		border: 3px solid var(--info);
+	}
+
+	.stamp-down {
+		bottom: 1rem;
+		top: auto;
+		left: 50%;
+		transform: translateX(-50%);
+		color: var(--warning);
+		border: 3px solid var(--warning);
+	}
+
+	.progress {
 		font-size: 0.8125rem;
-		color: #94a3b8;
+		color: var(--text-muted);
 	}
 
-	.done-screen h2 { font-size: 1.5rem; font-weight: 700; margin: 0; }
-	.done-screen p  { color: #475569; margin: 0; }
-
-	.done-icon {
-		width: 56px;
-		height: 56px;
-		background: #22c55e;
-		border-radius: 50%;
+	.btn-row {
 		display: flex;
-		align-items: center;
+		gap: 0.5rem;
+		flex-wrap: wrap;
 		justify-content: center;
-		font-size: 1.75rem;
-		color: white;
-		font-weight: 700;
 	}
+
+	.dir-btn {
+		font-size: 0.8125rem;
+		font-weight: 600;
+		padding: 0.5rem 1rem;
+		border-radius: 8px;
+		background: var(--surface2);
+		border: 1px solid var(--border);
+		color: var(--text);
+		cursor: pointer;
+		transition: background 0.15s;
+	}
+
+	.dir-btn:hover {
+		background: var(--surface);
+	}
+
+	.left-btn { color: var(--danger); border-color: var(--danger); }
+	.right-btn { color: var(--success); border-color: var(--success); }
+	.up-btn { color: var(--info); border-color: var(--info); }
+	.down-btn { color: var(--warning); border-color: var(--warning); }
 </style>
