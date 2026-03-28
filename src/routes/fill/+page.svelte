@@ -8,6 +8,16 @@
 
 	type Phase = 'loading' | 'surveying' | 'done' | 'error';
 
+	const NAME_KEY = 'swack_name';
+
+	function initName(): string {
+		const stored = localStorage.getItem(NAME_KEY);
+		if (stored) return stored;
+		const fresh = randomName();
+		localStorage.setItem(NAME_KEY, fresh);
+		return fresh;
+	}
+
 	let phase: Phase = $state('loading');
 	let errorMsg = $state('');
 	let config: FormConfig = $state({ ...DEFAULT_CONFIG });
@@ -16,10 +26,16 @@
 	let swipeDir: SwipeDirection | null = $state(null);
 	let hintVisible = $state(true);
 
+	let name = $state(initName());
+	let editingName = $state(false);
+	let nameInput = $state('');
+
+	let aggregateData: { question: string; score: number; votes: number }[] | null = $state(null);
+	let aggregateLoading = $state(false);
+
 	const sessionId = crypto.randomUUID();
-	const name = randomName();
 	const { privkeyHex: ephemeralPrivkey, pubkey: ephemeralPubkey } = generateKeypair();
-	void ephemeralPubkey; // used only for signing events inside NostrPool
+	void ephemeralPubkey;
 
 	let serverPubkey = '';
 	let configAesKey = '';
@@ -38,6 +54,16 @@
 	const FLY = 1100;
 	const HL_DIV = 140;
 	const MAX_HL = 0.8;
+
+	function isEnabled(dir: SwipeDirection): boolean {
+		const labels: Record<SwipeDirection, string> = {
+			Left: config.swipeLeftLabel,
+			Right: config.swipeRightLabel,
+			Up: config.swipeUpLabel,
+			Down: config.swipeDownLabel
+		};
+		return labels[dir] !== '';
+	}
 
 	onMount(() => {
 		const hash = window.location.hash.slice(1);
@@ -74,7 +100,7 @@
 		const unsub = pool.subscribeConfig(serverPubkey, async (encryptedContent) => {
 			try {
 				const json = await decryptConfig(encryptedContent, configAesKey);
-				config = JSON.parse(json);
+				config = { ...DEFAULT_CONFIG, ...JSON.parse(json) };
 				if (config.questions.length === 0) {
 					errorMsg = 'This form has no questions yet.';
 					phase = 'error';
@@ -88,24 +114,49 @@
 			unsub();
 		});
 
-		// timeout if no config arrives
 		setTimeout(() => {
 			if (phase === 'loading') {
-				errorMsg = 'Could not load form. The relay pool may be unreachable, or the form may not exist.';
+				errorMsg =
+					'Could not load form. The relay pool may be unreachable, or the form may not exist.';
 				phase = 'error';
 			}
 		}, 12000);
+	}
+
+	function saveName() {
+		const trimmed = nameInput.trim();
+		if (trimmed) {
+			name = trimmed;
+			localStorage.setItem(NAME_KEY, trimmed);
+		}
+		editingName = false;
+	}
+
+	function startEditingName() {
+		nameInput = name;
+		editingName = true;
 	}
 
 	function directionFromOffset(dx: number, dy: number): SwipeDirection | null {
 		const ax = Math.abs(dx);
 		const ay = Math.abs(dy);
 		if (ax < SWIPE_THRESHOLD && ay < SWIPE_THRESHOLD) return null;
-		if (ax >= ay) return dx > 0 ? 'Right' : 'Left';
-		return dy > 0 ? 'Down' : 'Up';
+		if (ax >= ay) {
+			if (dx > 0 && isEnabled('Right')) return 'Right';
+			if (dx < 0 && isEnabled('Left')) return 'Left';
+			return null;
+		}
+		if (dy > 0 && isEnabled('Down')) return 'Down';
+		if (dy < 0 && isEnabled('Up')) return 'Up';
+		return null;
 	}
 
-	function highlightFor(dir: SwipeDirection | null): { left: number; right: number; up: number; down: number } {
+	function highlightFor(dir: SwipeDirection | null): {
+		left: number;
+		right: number;
+		up: number;
+		down: number;
+	} {
 		const mk = (d: SwipeDirection) => {
 			const { x, y } = motion.current;
 			if (dir !== d) return 0;
@@ -115,8 +166,30 @@
 		return { left: mk('Left'), right: mk('Right'), up: mk('Up'), down: mk('Down') };
 	}
 
+	function fetchAggregate() {
+		if (config.aggregateVisibility !== 'on-completion' || !pool) return;
+		aggregateLoading = true;
+		const unsub = pool.subscribeAggregate(serverPubkey, async (encrypted) => {
+			try {
+				const json = await decryptConfig(encrypted, configAesKey);
+				const parsed = JSON.parse(json);
+				aggregateData = parsed.questions;
+			} catch {
+				// ignore malformed
+			}
+			aggregateLoading = false;
+			unsub();
+		});
+		setTimeout(() => {
+			if (aggregateLoading) {
+				aggregateLoading = false;
+				unsub();
+			}
+		}, 8000);
+	}
+
 	async function swipe(dir: SwipeDirection) {
-		if (!cardShown || phase !== 'surveying') return;
+		if (!cardShown || phase !== 'surveying' || !isEnabled(dir)) return;
 		hintVisible = false;
 		swipeDir = dir;
 
@@ -134,7 +207,10 @@
 		await submitAnswer(dir);
 
 		if (currentIndex + 1 >= config.questions.length) {
-			setTimeout(() => { phase = 'done'; }, 400);
+			setTimeout(() => {
+				phase = 'done';
+				fetchAggregate();
+			}, 400);
 			return;
 		}
 
@@ -163,11 +239,16 @@
 	}
 
 	function handleKeyDown(e: KeyboardEvent) {
+		if (editingName) return;
 		const map: Record<string, SwipeDirection> = {
-			ArrowLeft: 'Left', a: 'Left',
-			ArrowRight: 'Right', d: 'Right',
-			ArrowUp: 'Up', w: 'Up',
-			ArrowDown: 'Down', s: 'Down'
+			ArrowLeft: 'Left',
+			a: 'Left',
+			ArrowRight: 'Right',
+			d: 'Right',
+			ArrowUp: 'Up',
+			w: 'Up',
+			ArrowDown: 'Down',
+			s: 'Down'
 		};
 		const dir = map[e.key];
 		if (dir) swipe(dir);
@@ -243,7 +324,6 @@
 <div class="page">
 	{#if phase === 'loading'}
 		<div class="center"><span class="muted">Connecting to relay pool…</span></div>
-
 	{:else if phase === 'error'}
 		<div class="center">
 			<div class="error-box">
@@ -251,23 +331,99 @@
 				<a href="/">← Home</a>
 			</div>
 		</div>
-
 	{:else if phase === 'done'}
 		<div class="center">
 			<div class="done-box">
 				<div class="done-icon">✓</div>
 				<h2>All done!</h2>
-				<p class="muted">Your answers have been submitted.</p>
+				<p class="muted">Your answers have been submitted as <strong>{name}</strong>.</p>
+				{#if config.aggregateVisibility === 'on-completion'}
+					<div class="aggregate-section">
+						{#if aggregateLoading}
+							<p class="muted loading-agg">Loading results…</p>
+						{:else if aggregateData}
+							<h3>Score summary</h3>
+							<table class="agg-table">
+								<thead>
+									<tr>
+										<th>#</th>
+										<th>Question</th>
+										<th>Score</th>
+									</tr>
+								</thead>
+								<tbody>
+									{#each aggregateData as row, i}
+										<tr>
+											<td class="muted">{i + 1}</td>
+											<td>{row.question}</td>
+											<td
+												class:pos={row.score > 0}
+												class:neg={row.score < 0}
+											>
+												{row.score > 0 ? '+' : ''}{row.score}
+											</td>
+										</tr>
+									{/each}
+								</tbody>
+							</table>
+						{/if}
+					</div>
+				{/if}
 			</div>
 		</div>
-
 	{:else if phase === 'surveying'}
 		<div class="survey">
-			<!-- direction labels -->
-			<div class="label left" style="opacity: {hl.left}">{config.swipeLeftLabel}</div>
-			<div class="label right" style="opacity: {hl.right}">{config.swipeRightLabel}</div>
-			<div class="label up" style="opacity: {hl.up}">{config.swipeUpLabel}</div>
-			<div class="label down" style="opacity: {hl.down}">{config.swipeDownLabel}</div>
+			<!-- Name badge -->
+			<div class="name-bar">
+				{#if editingName}
+					<input
+						class="name-input"
+						bind:value={nameInput}
+						onblur={saveName}
+						onkeydown={(e) => e.key === 'Enter' && saveName()}
+	
+					/>
+				{:else}
+					<span class="name-text">{name}</span>
+					<button class="name-edit" onclick={startEditingName} aria-label="Change name">✎</button>
+				{/if}
+			</div>
+
+			<!-- Direction labels (appear during swipe) -->
+			{#if isEnabled('Left')}
+				<div class="label left" style="opacity: {hl.left}">{config.swipeLeftLabel}</div>
+			{/if}
+			{#if isEnabled('Right')}
+				<div class="label right" style="opacity: {hl.right}">{config.swipeRightLabel}</div>
+			{/if}
+			{#if isEnabled('Up')}
+				<div class="label up" style="opacity: {hl.up}">{config.swipeUpLabel}</div>
+			{/if}
+			{#if isEnabled('Down')}
+				<div class="label down" style="opacity: {hl.down}">{config.swipeDownLabel}</div>
+			{/if}
+
+			<!-- Direction buttons (always visible, positionally placed) -->
+			{#if isEnabled('Up')}
+				<button class="btn-dir btn-up" onclick={() => swipe('Up')}>
+					↑ {config.swipeUpLabel}
+				</button>
+			{/if}
+			{#if isEnabled('Left')}
+				<button class="btn-dir btn-left" onclick={() => swipe('Left')}>
+					{config.swipeLeftLabel}
+				</button>
+			{/if}
+			{#if isEnabled('Right')}
+				<button class="btn-dir btn-right" onclick={() => swipe('Right')}>
+					{config.swipeRightLabel}
+				</button>
+			{/if}
+			{#if isEnabled('Down')}
+				<button class="btn-dir btn-down" onclick={() => swipe('Down')}>
+					↓ {config.swipeDownLabel}
+				</button>
+			{/if}
 
 			<div class="card-area">
 				{#if cardShown}
@@ -283,13 +439,17 @@
 					>
 						<!-- stamp overlays -->
 						{#if swipeDir === 'Right'}
-							<div class="stamp stamp-yes" style="opacity: {hl.right}">{config.swipeRightLabel}</div>
+							<div class="stamp stamp-yes" style="opacity: {hl.right}">
+								{config.swipeRightLabel}
+							</div>
 						{:else if swipeDir === 'Left'}
 							<div class="stamp stamp-no" style="opacity: {hl.left}">{config.swipeLeftLabel}</div>
 						{:else if swipeDir === 'Up'}
 							<div class="stamp stamp-up" style="opacity: {hl.up}">{config.swipeUpLabel}</div>
 						{:else if swipeDir === 'Down'}
-							<div class="stamp stamp-down" style="opacity: {hl.down}">{config.swipeDownLabel}</div>
+							<div class="stamp stamp-down" style="opacity: {hl.down}">
+								{config.swipeDownLabel}
+							</div>
 						{/if}
 
 						<p class="question">{config.questions[currentIndex]}</p>
@@ -303,13 +463,6 @@
 
 			<div class="progress">
 				{currentIndex + 1} / {config.questions.length}
-			</div>
-
-			<div class="btn-row">
-				<button class="dir-btn left-btn" onclick={() => swipe('Left')}>{config.swipeLeftLabel}</button>
-				<button class="dir-btn up-btn" onclick={() => swipe('Up')}>{config.swipeUpLabel}</button>
-				<button class="dir-btn down-btn" onclick={() => swipe('Down')}>{config.swipeDownLabel}</button>
-				<button class="dir-btn right-btn" onclick={() => swipe('Right')}>{config.swipeRightLabel}</button>
 			</div>
 		</div>
 	{/if}
@@ -342,6 +495,9 @@
 
 	.done-box {
 		text-align: center;
+		max-width: 480px;
+		padding: 2rem;
+		width: 100%;
 	}
 
 	.done-icon {
@@ -355,6 +511,58 @@
 		font-size: 1.5rem;
 	}
 
+	.done-box > .muted {
+		margin: 0 0 1.5rem;
+	}
+
+	.aggregate-section {
+		margin-top: 1.5rem;
+		text-align: left;
+	}
+
+	.aggregate-section h3 {
+		font-size: 0.8125rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--text-muted);
+		margin: 0 0 0.75rem;
+	}
+
+	.loading-agg {
+		font-size: 0.875rem;
+	}
+
+	.agg-table {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: 0.875rem;
+	}
+
+	.agg-table th {
+		text-align: left;
+		color: var(--text-muted);
+		padding: 0.4rem 0.5rem;
+		border-bottom: 1px solid var(--border);
+		font-weight: 500;
+	}
+
+	.agg-table td {
+		padding: 0.4rem 0.5rem;
+		border-bottom: 1px solid var(--border);
+	}
+
+	.pos {
+		color: var(--success);
+		font-weight: 600;
+	}
+
+	.neg {
+		color: var(--danger);
+		font-weight: 600;
+	}
+
+	/* Survey layout */
 	.survey {
 		position: relative;
 		width: 100%;
@@ -364,11 +572,47 @@
 		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		gap: 1.5rem;
-		padding: 2rem 1rem;
 		user-select: none;
 	}
 
+	/* Name badge */
+	.name-bar {
+		position: absolute;
+		top: 0.75rem;
+		right: 0.75rem;
+		display: flex;
+		align-items: center;
+		gap: 0.35rem;
+		background: var(--surface2);
+		border: 1px solid var(--border);
+		border-radius: 20px;
+		padding: 0.3rem 0.6rem;
+		z-index: 10;
+	}
+
+	.name-text {
+		font-size: 0.8rem;
+		color: var(--text-muted);
+	}
+
+	.name-edit {
+		background: none;
+		border: none;
+		padding: 0;
+		font-size: 0.8rem;
+		color: var(--text-muted);
+		cursor: pointer;
+		line-height: 1;
+	}
+
+	.name-input {
+		font-size: 0.8rem;
+		padding: 0.1rem 0.3rem;
+		width: 120px;
+		border-radius: 4px;
+	}
+
+	/* Direction labels (swipe feedback) */
 	.label {
 		position: absolute;
 		font-size: 1.25rem;
@@ -377,24 +621,25 @@
 		letter-spacing: 0.1em;
 		pointer-events: none;
 		transition: opacity 0.1s;
+		z-index: 5;
 	}
 
 	.label.left {
-		left: 1rem;
+		left: 5rem;
 		top: 50%;
 		transform: translateY(-50%);
 		color: var(--danger);
 	}
 
 	.label.right {
-		right: 1rem;
+		right: 5rem;
 		top: 50%;
 		transform: translateY(-50%);
 		color: var(--success);
 	}
 
 	.label.up {
-		top: 1.5rem;
+		top: 5rem;
 		left: 50%;
 		transform: translateX(-50%);
 		color: var(--info);
@@ -407,9 +652,70 @@
 		color: var(--warning);
 	}
 
+	/* Directional action buttons */
+	.btn-dir {
+		position: absolute;
+		font-size: 0.8rem;
+		font-weight: 700;
+		padding: 0.45rem 0.9rem;
+		border-radius: 8px;
+		background: var(--surface2);
+		border: 1px solid var(--border);
+		cursor: pointer;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		z-index: 2;
+		transition: background 0.15s;
+		white-space: nowrap;
+	}
+
+	.btn-dir:hover {
+		background: var(--surface);
+	}
+
+	.btn-up {
+		top: 1rem;
+		left: 50%;
+		transform: translateX(-50%);
+		color: var(--info);
+		border-color: color-mix(in srgb, var(--info) 40%, var(--border));
+	}
+
+	.btn-down {
+		bottom: 1rem;
+		left: 50%;
+		transform: translateX(-50%);
+		color: var(--warning);
+		border-color: color-mix(in srgb, var(--warning) 40%, var(--border));
+	}
+
+	.btn-left {
+		left: 0.4rem;
+		top: 50%;
+		transform: translateY(-50%);
+		color: var(--danger);
+		border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
+		max-width: 62px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.btn-right {
+		right: 0.4rem;
+		top: 50%;
+		transform: translateY(-50%);
+		color: var(--success);
+		border-color: color-mix(in srgb, var(--success) 40%, var(--border));
+		max-width: 62px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	/* Card area */
 	.card-area {
 		position: relative;
 		width: 100%;
+		padding: 0 5rem;
 		height: 340px;
 		display: flex;
 		align-items: center;
@@ -418,8 +724,8 @@
 
 	.card {
 		position: absolute;
-		width: 100%;
-		max-width: 360px;
+		width: calc(100% - 10rem);
+		max-width: 320px;
 		min-height: 220px;
 		background: var(--surface);
 		border: 1px solid var(--border);
@@ -440,7 +746,7 @@
 	}
 
 	.question {
-		font-size: 1.25rem;
+		font-size: 1.2rem;
 		font-weight: 500;
 		line-height: 1.5;
 		margin: 0 0 1rem;
@@ -498,33 +804,6 @@
 	.progress {
 		font-size: 0.8125rem;
 		color: var(--text-muted);
+		margin-top: 1rem;
 	}
-
-	.btn-row {
-		display: flex;
-		gap: 0.5rem;
-		flex-wrap: wrap;
-		justify-content: center;
-	}
-
-	.dir-btn {
-		font-size: 0.8125rem;
-		font-weight: 600;
-		padding: 0.5rem 1rem;
-		border-radius: 8px;
-		background: var(--surface2);
-		border: 1px solid var(--border);
-		color: var(--text);
-		cursor: pointer;
-		transition: background 0.15s;
-	}
-
-	.dir-btn:hover {
-		background: var(--surface);
-	}
-
-	.left-btn { color: var(--danger); border-color: var(--danger); }
-	.right-btn { color: var(--success); border-color: var(--success); }
-	.up-btn { color: var(--info); border-color: var(--info); }
-	.down-btn { color: var(--warning); border-color: var(--warning); }
 </style>

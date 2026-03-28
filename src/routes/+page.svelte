@@ -7,6 +7,9 @@
 
 	let existing: AdminRecord[] = $state([]);
 	let creating = $state(false);
+	let importJson = $state('');
+	let importError = $state('');
+	const importPlaceholder = '{"pubkey":"...","privkeyHex":"...","configAesKey":"..."}';
 
 	onMount(async () => {
 		existing = await getAllAdmins();
@@ -18,6 +21,18 @@
 		const configAesKey = generateAesKey();
 		await saveAdmin({ pubkey, privkeyHex, configAesKey });
 		window.location.href = `/admin#${pubkey}`;
+	}
+
+	async function importForm() {
+		importError = '';
+		try {
+			const data = JSON.parse(importJson.trim());
+			if (!data.pubkey || !data.privkeyHex || !data.configAesKey) throw new Error('Missing fields');
+			await saveAdmin({ pubkey: data.pubkey, privkeyHex: data.privkeyHex, configAesKey: data.configAesKey });
+			window.location.href = `/admin#${data.pubkey}`;
+		} catch {
+			importError = 'Invalid JSON. Copy the full export from the admin page.';
+		}
 	}
 </script>
 
@@ -104,6 +119,25 @@
 				</ul>
 			</section>
 		{/if}
+
+		<section class="import-section">
+			<details>
+				<summary>Import existing form from another device</summary>
+				<p class="import-hint">
+					On your other device, go to the admin page → "Export credentials" → "Copy all as JSON",
+					then paste it here.
+				</p>
+				<textarea
+					bind:value={importJson}
+					rows={4}
+					placeholder={importPlaceholder}
+				></textarea>
+				{#if importError}
+					<p class="import-error">{importError}</p>
+				{/if}
+				<button class="primary" onclick={importForm}>Import</button>
+			</details>
+		</section>
 	</main>
 
 	<footer>
@@ -245,6 +279,49 @@
 	.pubkey {
 		font-family: ui-monospace, monospace;
 		font-size: 0.875rem;
+	}
+
+	.import-section details {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		padding: 0.75rem 1rem;
+	}
+
+	.import-section summary {
+		cursor: pointer;
+		font-size: 0.875rem;
+		color: var(--text-muted);
+		list-style: none;
+	}
+
+	.import-section summary::-webkit-details-marker {
+		display: none;
+	}
+
+	.import-section summary::before {
+		content: '+ ';
+	}
+
+	.import-section details[open] summary::before {
+		content: '− ';
+	}
+
+	.import-hint {
+		font-size: 0.8125rem;
+		color: var(--text-muted);
+		margin: 0.75rem 0 0.5rem;
+		line-height: 1.6;
+	}
+
+	.import-error {
+		font-size: 0.8125rem;
+		color: var(--danger);
+		margin: 0.4rem 0;
+	}
+
+	.import-section button {
+		margin-top: 0.5rem;
 	}
 
 	footer {

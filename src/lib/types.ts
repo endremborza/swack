@@ -4,14 +4,16 @@ export interface FormConfig {
 	swipeUpLabel: string;
 	swipeDownLabel: string;
 	questions: string[];
+	aggregateVisibility: 'admin-only' | 'on-completion';
 }
 
 export const DEFAULT_CONFIG: FormConfig = {
-	swipeLeftLabel: 'No',
-	swipeRightLabel: 'Yes',
-	swipeUpLabel: 'Maybe',
-	swipeDownLabel: 'Skip',
-	questions: []
+	swipeLeftLabel: '-1',
+	swipeRightLabel: '+1',
+	swipeUpLabel: 'skip',
+	swipeDownLabel: '',
+	questions: [],
+	aggregateVisibility: 'admin-only'
 };
 
 export type SwipeDirection = 'Left' | 'Right' | 'Up' | 'Down';
@@ -38,4 +40,10 @@ export interface AnswerRecord {
 	qIndex: number;
 	answer: string;
 	timestamp: number;
+}
+
+export interface AggregateRow {
+	question: string;
+	score: number;
+	votes: number;
 }
