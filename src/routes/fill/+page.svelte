@@ -192,9 +192,12 @@
 	}
 
 	function directionColor(dir: SwipeDirection): string {
-		return { Left: 'var(--danger)', Right: 'var(--success)', Up: 'var(--info)', Down: 'var(--warning)' }[
-			dir
-		];
+		return {
+			Left: 'var(--danger)',
+			Right: 'var(--success)',
+			Up: 'var(--info)',
+			Down: 'var(--warning)'
+		}[dir];
 	}
 
 	function fillAgain() {
@@ -500,10 +503,6 @@
 								>
 							</div>
 						{/each}
-					</div>
-				{:else}
-					<div class="resume-btns">
-						<button class="ghost" onclick={() => (showReview = true)}>Review answers</button>
 					</div>
 				{/if}
 				<button class="primary" onclick={fillAgain}>Fill again</button>
