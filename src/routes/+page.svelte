@@ -20,7 +20,12 @@
 		try {
 			const data = JSON.parse(importJson.trim());
 			if (!data.pubkey || !data.privkeyHex || !data.configAesKey) throw new Error('Missing fields');
-			await saveAdmin({ pubkey: data.pubkey, privkeyHex: data.privkeyHex, configAesKey: data.configAesKey, name: data.name });
+			await saveAdmin({
+				pubkey: data.pubkey,
+				privkeyHex: data.privkeyHex,
+				configAesKey: data.configAesKey,
+				name: data.name
+			});
 			window.location.href = `${base}/admin#${data.pubkey}`;
 		} catch {
 			importError = 'Invalid JSON. Copy the full export from the admin page.';
@@ -132,7 +137,11 @@
 									<span class="pubkey">{form.pubkey.slice(0, 16)}…</span>
 								{/if}
 							</a>
-							<button class="danger-btn small" onclick={() => deleteForm(form.pubkey)} aria-label="Delete form">✕</button>
+							<button
+								class="danger-btn small"
+								onclick={() => deleteForm(form.pubkey)}
+								aria-label="Delete form">✕</button
+							>
 						</li>
 					{/each}
 				</ul>
@@ -146,11 +155,7 @@
 					On your other device, go to the admin page → "Export credentials" → "Copy all as JSON",
 					then paste it here.
 				</p>
-				<textarea
-					bind:value={importJson}
-					rows={4}
-					placeholder={importPlaceholder}
-				></textarea>
+				<textarea bind:value={importJson} rows={4} placeholder={importPlaceholder}></textarea>
 				{#if importError}
 					<p class="import-error">{importError}</p>
 				{/if}
@@ -160,7 +165,10 @@
 	</main>
 
 	<footer>
-		<p>Powered by <a href="https://nostr.com" target="_blank" rel="noopener">Nostr</a>. No tracking. No accounts.</p>
+		<p>
+			Powered by <a href="https://nostr.com" target="_blank" rel="noopener">Nostr</a>. No tracking.
+			No accounts.
+		</p>
 	</footer>
 </div>
 
