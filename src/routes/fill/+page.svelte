@@ -7,7 +7,7 @@
 	import { randomName } from '$lib/names';
 	import { DEFAULT_CONFIG, type FormConfig, type SwipeDirection } from '$lib/types';
 
-	type Phase = 'loading' | 'surveying' | 'done' | 'error';
+	type Phase = 'loading' | 'naming' | 'surveying' | 'done' | 'error';
 
 	const NAME_KEY = 'swack_name';
 
@@ -150,7 +150,12 @@
 				}
 				const indices = config.questions.map((_, i) => i);
 				displayOrder = config.randomizeOrder ? shuffled(indices) : indices;
-				phase = 'surveying';
+				if (config.nameMode === 'required') {
+					nameInput = name;
+					phase = 'naming';
+				} else {
+					phase = 'surveying';
+				}
 			} catch {
 				errorMsg = 'Could not decrypt form config. The link may be malformed.';
 				phase = 'error';
@@ -165,6 +170,14 @@
 			localStorage.setItem(NAME_KEY, trimmed);
 		}
 		editingName = false;
+	}
+
+	function continueFromNaming() {
+		const trimmed = nameInput.trim();
+		if (!trimmed) return;
+		name = trimmed;
+		localStorage.setItem(NAME_KEY, trimmed);
+		phase = 'surveying';
 	}
 
 	function startEditingName() {
@@ -392,6 +405,23 @@
 			{#if relayCount > 0}
 				<span class="relay-hint">{relayCount} relays</span>
 			{/if}
+		</div>
+	{:else if phase === 'naming'}
+		<div class="center">
+			<div class="naming-box">
+				{#if config.name}<p class="naming-form-title">{config.name}</p>{/if}
+				<h2>What's your name?</h2>
+				<input
+					class="naming-input"
+					type="text"
+					bind:value={nameInput}
+					placeholder="Your name"
+					onkeydown={(e) => e.key === 'Enter' && continueFromNaming()}
+				/>
+				<button class="primary naming-btn" onclick={continueFromNaming} disabled={!nameInput.trim()}>
+					Start
+				</button>
+			</div>
 		</div>
 	{:else if phase === 'error'}
 		<div class="center">
@@ -962,5 +992,42 @@
 		padding: 0.2rem 0.5rem;
 		border-radius: 4px;
 		cursor: pointer;
+	}
+
+	.naming-box {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 1rem;
+		max-width: 320px;
+		width: 100%;
+		padding: 2rem;
+	}
+
+	.naming-form-title {
+		font-size: 0.8rem;
+		font-weight: 600;
+		color: var(--text-muted);
+		margin: 0;
+	}
+
+	.naming-box h2 {
+		font-size: 1.25rem;
+		font-weight: 600;
+		margin: 0;
+	}
+
+	.naming-input {
+		width: 100%;
+		font-size: 1rem;
+		padding: 0.6rem 0.75rem;
+		border-radius: 8px;
+		text-align: center;
+	}
+
+	.naming-btn {
+		width: 100%;
+		font-size: 1rem;
+		padding: 0.65rem 1.5rem;
 	}
 </style>

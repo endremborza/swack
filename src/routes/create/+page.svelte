@@ -80,6 +80,7 @@
 		const configAesKey = generateAesKey();
 
 		const pool = new NostrPool();
+		relayConfirms = getRelays().map((url) => ({ url, status: 'pending' as const }));
 		await pool.connect(true);
 
 		relayConfirms = pool.relayStatus.map((r) => ({
@@ -200,6 +201,21 @@
 							disabled={phase === 'publishing'}
 						/>
 						Randomize question order for each respondent
+					</label>
+				</div>
+				<div class="aggregate-opt">
+					<label class="inline-label">
+						<input
+							type="checkbox"
+							checked={config.nameMode === 'required'}
+							onchange={(e) =>
+								(config = {
+									...config,
+									nameMode: (e.target as HTMLInputElement).checked ? 'required' : 'disabled'
+								})}
+							disabled={phase === 'publishing'}
+						/>
+						Require respondents to enter their name before starting
 					</label>
 				</div>
 			</section>

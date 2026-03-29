@@ -24,8 +24,26 @@
 	let unsubAnswers: (() => void) | null = null;
 	let aggPublishTimer: ReturnType<typeof setTimeout> | null = null;
 
+	type SortCol = 'idx' | 'score' | 'votes';
+	let sortCol: SortCol = $state('idx');
+	let sortDir: 1 | -1 = $state(1);
+
 	const connectedCount = $derived(relayStatus.filter((r) => r.ok).length);
 	const aggregate = $derived(computeAggregate());
+	const sortedAggregate = $derived(
+		aggregate
+			? [...aggregate].sort((a, b) => (a[sortCol] - b[sortCol]) * sortDir)
+			: null
+	);
+
+	function toggleSort(col: SortCol) {
+		if (sortCol === col) {
+			sortDir = sortDir === 1 ? -1 : 1;
+		} else {
+			sortCol = col;
+			sortDir = col === 'idx' ? 1 : -1;
+		}
+	}
 
 	function fillUrl(): string {
 		if (!record) return '';
@@ -56,7 +74,7 @@
 		setTimeout(() => (credCopied = ''), 2000);
 	}
 
-	function computeAggregate(): { question: string; score: number; votes: number }[] | null {
+	function computeAggregate(): { question: string; score: number; votes: number; idx: number }[] | null {
 		const vals: Record<string, number> = {};
 		const dirs: [string, string][] = [
 			['Left', config.swipeLeftLabel],
@@ -73,7 +91,7 @@
 		return config.questions.map((q, i) => {
 			const relevant = answers.filter((a) => a.qIndex === i && a.answer in vals);
 			const score = relevant.reduce((s, a) => s + (vals[a.answer] ?? 0), 0);
-			return { question: q, score, votes: relevant.length };
+			return { question: q, score, votes: relevant.length, idx: i };
 		});
 	}
 
@@ -344,7 +362,7 @@
 			</section>
 
 			<!-- Aggregate scores -->
-			{#if aggregate}
+			{#if sortedAggregate}
 				<section class="card">
 					<div class="section-header">
 						<h2>Aggregate scores</h2>
@@ -354,16 +372,22 @@
 					<table>
 						<thead>
 							<tr>
-								<th>#</th>
+								<th class="sortable" onclick={() => toggleSort('idx')}>
+									#{sortCol === 'idx' ? (sortDir === 1 ? ' ↑' : ' ↓') : ''}
+								</th>
 								<th>Question</th>
-								<th>Score</th>
-								<th>Votes</th>
+								<th class="sortable" onclick={() => toggleSort('score')}>
+									Score{sortCol === 'score' ? (sortDir === 1 ? ' ↑' : ' ↓') : ''}
+								</th>
+								<th class="sortable" onclick={() => toggleSort('votes')}>
+									Votes{sortCol === 'votes' ? (sortDir === 1 ? ' ↑' : ' ↓') : ''}
+								</th>
 							</tr>
 						</thead>
 						<tbody>
-							{#each aggregate as row, i}
+							{#each sortedAggregate as row}
 								<tr>
-									<td class="mono">{i + 1}</td>
+									<td class="mono">{row.idx + 1}</td>
 									<td>{row.question}</td>
 									<td class:positive={row.score > 0} class:negative={row.score < 0}>
 										{row.score > 0 ? '+' : ''}{row.score}
@@ -719,6 +743,16 @@
 		padding: 0.4rem 0.5rem;
 		border-bottom: 1px solid var(--border);
 		font-weight: 500;
+	}
+
+	th.sortable {
+		cursor: pointer;
+		user-select: none;
+		white-space: nowrap;
+	}
+
+	th.sortable:hover {
+		color: var(--text);
 	}
 
 	td {

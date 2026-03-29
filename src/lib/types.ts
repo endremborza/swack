@@ -8,6 +8,7 @@ export interface FormConfig {
 	aggregateVisibility: 'admin-only' | 'on-completion';
 	randomizeOrder: boolean;
 	confirmThreshold: number;
+	nameMode: 'disabled' | 'required';
 }
 
 export const DEFAULT_CONFIG: FormConfig = {
@@ -19,7 +20,8 @@ export const DEFAULT_CONFIG: FormConfig = {
 	questions: [],
 	aggregateVisibility: 'on-completion',
 	randomizeOrder: true,
-	confirmThreshold: 2
+	confirmThreshold: 2,
+	nameMode: 'disabled'
 };
 
 export type SwipeDirection = 'Left' | 'Right' | 'Up' | 'Down';
