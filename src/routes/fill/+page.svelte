@@ -240,7 +240,9 @@
 		if (toastTimer) clearTimeout(toastTimer);
 		answerToast = toast;
 		if (toast && toast.status !== 'failed') {
-			toastTimer = setTimeout(() => { answerToast = null; }, 2500);
+			toastTimer = setTimeout(() => {
+				answerToast = null;
+			}, 2500);
 		}
 	}
 
@@ -409,7 +411,11 @@
 					placeholder="Your name"
 					onkeydown={(e) => e.key === 'Enter' && continueFromNaming()}
 				/>
-				<button class="primary naming-btn" onclick={continueFromNaming} disabled={!nameInput.trim()}>
+				<button
+					class="primary naming-btn"
+					onclick={continueFromNaming}
+					disabled={!nameInput.trim()}
+				>
 					Start
 				</button>
 			</div>
@@ -446,10 +452,7 @@
 										<tr>
 											<td class="muted">{i + 1}</td>
 											<td>{row.question}</td>
-											<td
-												class:pos={row.score > 0}
-												class:neg={row.score < 0}
-											>
+											<td class:pos={row.score > 0} class:neg={row.score < 0}>
 												{row.score > 0 ? '+' : ''}{row.score}
 											</td>
 										</tr>
@@ -476,7 +479,6 @@
 						bind:value={nameInput}
 						onblur={saveName}
 						onkeydown={(e) => e.key === 'Enter' && saveName()}
-	
 					/>
 				{:else}
 					<span class="name-text">{name}</span>
@@ -524,7 +526,8 @@
 				{#if cardShown}
 					<div
 						class="card"
-						style="transform: translate({motion.current.x}px, {motion.current.y}px) rotate({motion.current.rotation}deg); opacity: {motion.current.opacity};"
+						style="transform: translate({motion.current.x}px, {motion.current.y}px) rotate({motion
+							.current.rotation}deg); opacity: {motion.current.opacity};"
 						onmousedown={handleMouseDown}
 						ontouchstart={handleTouchStart}
 						ontouchmove={handleTouchMove}
@@ -563,7 +566,12 @@
 
 		<!-- Answer status toast -->
 		{#if answerToast}
-			<div class="answer-toast" class:toast-ok={answerToast.status === 'ok'} class:toast-partial={answerToast.status === 'partial'} class:toast-failed={answerToast.status === 'failed'}>
+			<div
+				class="answer-toast"
+				class:toast-ok={answerToast.status === 'ok'}
+				class:toast-partial={answerToast.status === 'partial'}
+				class:toast-failed={answerToast.status === 'failed'}
+			>
 				{#if answerToast.status === 'ok'}
 					✓ Recorded
 				{:else if answerToast.status === 'partial'}
@@ -571,7 +579,12 @@
 				{:else}
 					Connection issue — answer may not have been sent
 					<button class="retry-btn" onclick={answerToast.retry}>Retry</button>
-					<button class="dismiss-btn" onclick={() => { answerToast = null; }}>Dismiss</button>
+					<button
+						class="dismiss-btn"
+						onclick={() => {
+							answerToast = null;
+						}}>Dismiss</button
+					>
 				{/if}
 			</div>
 		{/if}

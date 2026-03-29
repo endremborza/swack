@@ -32,9 +32,7 @@
 	const connectedCount = $derived(relayStatus.filter((r) => r.ok).length);
 	const aggregate = $derived(computeAggregate());
 	const sortedAggregate = $derived(
-		aggregate
-			? [...aggregate].sort((a, b) => (a[sortCol] - b[sortCol]) * sortDir)
-			: null
+		aggregate ? [...aggregate].sort((a, b) => (a[sortCol] - b[sortCol]) * sortDir) : null
 	);
 
 	function toggleSort(col: SortCol) {
@@ -66,7 +64,12 @@
 	async function copyExportJson() {
 		if (!record) return;
 		const json = JSON.stringify(
-			{ pubkey: record.pubkey, privkeyHex: record.privkeyHex, configAesKey: record.configAesKey, name: record.name },
+			{
+				pubkey: record.pubkey,
+				privkeyHex: record.privkeyHex,
+				configAesKey: record.configAesKey,
+				name: record.name
+			},
 			null,
 			2
 		);
@@ -75,7 +78,9 @@
 		setTimeout(() => (credCopied = ''), 2000);
 	}
 
-	function computeAggregate(): { question: string; score: number; votes: number; idx: number }[] | null {
+	function computeAggregate():
+		| { question: string; score: number; votes: number; idx: number }[]
+		| null {
 		const vals: Record<string, number> = {};
 		const dirs: [string, string][] = [
 			['Left', config.swipeLeftLabel],
@@ -146,7 +151,12 @@
 		if (!aggregate) return;
 		const rows = [['q_index', 'question', 'score', 'votes']];
 		for (let i = 0; i < aggregate.length; i++) {
-			rows.push([String(i + 1), aggregate[i].question, String(aggregate[i].score), String(aggregate[i].votes)]);
+			rows.push([
+				String(i + 1),
+				aggregate[i].question,
+				String(aggregate[i].score),
+				String(aggregate[i].votes)
+			]);
 		}
 		exportCsv(rowsToCsv(rows), 'aggregate.csv');
 	}
@@ -196,9 +206,7 @@
 			config.swipeRightLabel && !isNaN(Number(config.swipeRightLabel))
 				? `→ ${config.swipeRightLabel}`
 				: '',
-			config.swipeUpLabel && !isNaN(Number(config.swipeUpLabel))
-				? `↑ ${config.swipeUpLabel}`
-				: '',
+			config.swipeUpLabel && !isNaN(Number(config.swipeUpLabel)) ? `↑ ${config.swipeUpLabel}` : '',
 			config.swipeDownLabel && !isNaN(Number(config.swipeDownLabel))
 				? `↓ ${config.swipeDownLabel}`
 				: ''
@@ -279,208 +287,203 @@
 				{connectedCount}/{relayStatus.length} relays
 			</div>
 		{/snippet}
-			<!-- Share link -->
-			<section class="card">
-				<h2>Share link</h2>
-				<div class="link-row">
-					<span class="link-text">{fillUrl()}</span>
-					<button class="primary" onclick={copyLink}>{copied ? 'Copied!' : 'Copy'}</button>
-				</div>
-				<p class="hint">Anyone with this link can fill out the survey.</p>
-			</section>
+		<!-- Share link -->
+		<section class="card">
+			<h2>Share link</h2>
+			<div class="link-row">
+				<span class="link-text">{fillUrl()}</span>
+				<button class="primary" onclick={copyLink}>{copied ? 'Copied!' : 'Copy'}</button>
+			</div>
+			<p class="hint">Anyone with this link can fill out the survey.</p>
+		</section>
 
-			<!-- Form info (read-only) -->
-			<section class="card">
-				<h2>Form</h2>
-				<dl class="form-info">
-					<dt>Name</dt>
-					<dd>{config.name || 'Untitled'}</dd>
-					<dt>Questions</dt>
-					<dd>{config.questions.length}</dd>
-					<dt>Swipe labels</dt>
-					<dd class="labels-row">
-						{#if config.swipeLeftLabel}<span class="label-chip left">← {config.swipeLeftLabel}</span>{/if}
-						{#if config.swipeRightLabel}<span class="label-chip right">→ {config.swipeRightLabel}</span>{/if}
-						{#if config.swipeUpLabel}<span class="label-chip up">↑ {config.swipeUpLabel}</span>{/if}
-						{#if config.swipeDownLabel}<span class="label-chip down">↓ {config.swipeDownLabel}</span>{/if}
-					</dd>
-					<dt>Settings</dt>
-					<dd>
-						{config.randomizeOrder ? 'Randomized order' : 'Fixed order'} ·
-						{config.aggregateVisibility === 'on-completion'
-							? 'Aggregate shown on completion'
-							: 'Aggregate admin-only'} ·
-						confirm ≥{config.confirmThreshold} relays
-					</dd>
-				</dl>
-				<p class="hint">Form config is immutable after publish. <a href="{base}/create">Create a new form →</a></p>
-			</section>
+		<!-- Form info (read-only) -->
+		<section class="card">
+			<h2>Form</h2>
+			<dl class="form-info">
+				<dt>Name</dt>
+				<dd>{config.name || 'Untitled'}</dd>
+				<dt>Questions</dt>
+				<dd>{config.questions.length}</dd>
+				<dt>Swipe labels</dt>
+				<dd class="labels-row">
+					{#if config.swipeLeftLabel}<span class="label-chip left">← {config.swipeLeftLabel}</span
+						>{/if}
+					{#if config.swipeRightLabel}<span class="label-chip right"
+							>→ {config.swipeRightLabel}</span
+						>{/if}
+					{#if config.swipeUpLabel}<span class="label-chip up">↑ {config.swipeUpLabel}</span>{/if}
+					{#if config.swipeDownLabel}<span class="label-chip down">↓ {config.swipeDownLabel}</span
+						>{/if}
+				</dd>
+				<dt>Settings</dt>
+				<dd>
+					{config.randomizeOrder ? 'Randomized order' : 'Fixed order'} ·
+					{config.aggregateVisibility === 'on-completion'
+						? 'Aggregate shown on completion'
+						: 'Aggregate admin-only'} · confirm ≥{config.confirmThreshold} relays
+				</dd>
+			</dl>
+			<p class="hint">
+				Form config is immutable after publish. <a href="{base}/create">Create a new form →</a>
+			</p>
+		</section>
 
-			<!-- Multi-device access -->
-			<section class="card">
-				<h2>Admin access on other devices</h2>
-				<p class="hint">
-					Your private key lives only in this browser. Export credentials to access this form on
-					another device.
-				</p>
-				<button class="ghost" onclick={() => (showCredentials = !showCredentials)}>
-					{showCredentials ? 'Hide credentials' : 'Export credentials'}
-				</button>
-				{#if showCredentials}
-					<div class="cred-box">
-						<p class="cred-warn">
-							Anyone with the private key can decrypt all answers. Store securely.
-						</p>
-						{#each [
-							{ label: 'Public key (form ID)', key: 'pubkey', value: record.pubkey },
-							{ label: 'Private key', key: 'privkey', value: record.privkeyHex },
-							{ label: 'Config AES key', key: 'aeskey', value: record.configAesKey }
-						] as cred}
-							<div class="cred-item">
-								<span class="cred-label">{cred.label}</span>
-								<div class="cred-value-row">
-									<code class="cred-value">{cred.value}</code>
-									<button class="ghost small" onclick={() => copyText(cred.value, cred.key)}>
-										{credCopied === cred.key ? '✓' : 'Copy'}
-									</button>
-								</div>
+		<!-- Multi-device access -->
+		<section class="card">
+			<h2>Admin access on other devices</h2>
+			<p class="hint">
+				Your private key lives only in this browser. Export credentials to access this form on
+				another device.
+			</p>
+			<button class="ghost" onclick={() => (showCredentials = !showCredentials)}>
+				{showCredentials ? 'Hide credentials' : 'Export credentials'}
+			</button>
+			{#if showCredentials}
+				<div class="cred-box">
+					<p class="cred-warn">
+						Anyone with the private key can decrypt all answers. Store securely.
+					</p>
+					{#each [{ label: 'Public key (form ID)', key: 'pubkey', value: record.pubkey }, { label: 'Private key', key: 'privkey', value: record.privkeyHex }, { label: 'Config AES key', key: 'aeskey', value: record.configAesKey }] as cred}
+						<div class="cred-item">
+							<span class="cred-label">{cred.label}</span>
+							<div class="cred-value-row">
+								<code class="cred-value">{cred.value}</code>
+								<button class="ghost small" onclick={() => copyText(cred.value, cred.key)}>
+									{credCopied === cred.key ? '✓' : 'Copy'}
+								</button>
 							</div>
-						{/each}
-						<button class="primary" onclick={copyExportJson}>
-							{credCopied === 'json' ? 'Copied!' : 'Copy all as JSON'}
-						</button>
-						<p class="hint">
-							On the other device: go to the Swack home page → "Import existing form" → paste the
-							JSON.
-						</p>
-					</div>
-				{/if}
-			</section>
+						</div>
+					{/each}
+					<button class="primary" onclick={copyExportJson}>
+						{credCopied === 'json' ? 'Copied!' : 'Copy all as JSON'}
+					</button>
+					<p class="hint">
+						On the other device: go to the Swack home page → "Import existing form" → paste the
+						JSON.
+					</p>
+				</div>
+			{/if}
+		</section>
 
-			<!-- Aggregate scores -->
-			{#if sortedAggregate}
-				<section class="card">
-					<div class="section-header">
-						<h2>Aggregate scores</h2>
-						<button class="ghost" onclick={downloadAggregateCsv}>Export CSV</button>
-					</div>
-					<p class="hint">Numeric directions: {numericLabelsSummary()}</p>
+		<!-- Aggregate scores -->
+		{#if sortedAggregate}
+			<section class="card">
+				<div class="section-header">
+					<h2>Aggregate scores</h2>
+					<button class="ghost" onclick={downloadAggregateCsv}>Export CSV</button>
+				</div>
+				<p class="hint">Numeric directions: {numericLabelsSummary()}</p>
+				<table>
+					<thead>
+						<tr>
+							<th class="sortable" onclick={() => toggleSort('idx')}>
+								#{sortCol === 'idx' ? (sortDir === 1 ? ' ↑' : ' ↓') : ''}
+							</th>
+							<th>Question</th>
+							<th class="sortable" onclick={() => toggleSort('score')}>
+								Score{sortCol === 'score' ? (sortDir === 1 ? ' ↑' : ' ↓') : ''}
+							</th>
+							<th class="sortable" onclick={() => toggleSort('votes')}>
+								Votes{sortCol === 'votes' ? (sortDir === 1 ? ' ↑' : ' ↓') : ''}
+							</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each sortedAggregate as row}
+							<tr>
+								<td class="mono">{row.idx + 1}</td>
+								<td>{row.question}</td>
+								<td class:positive={row.score > 0} class:negative={row.score < 0}>
+									{row.score > 0 ? '+' : ''}{row.score}
+								</td>
+								<td class="muted">{row.votes}</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</section>
+		{/if}
+
+		<!-- Responses -->
+		<section class="card">
+			<div class="section-header">
+				<h2>Responses ({answers.length})</h2>
+				{#if answers.length > 0}
+					<button class="ghost" onclick={downloadAnswersCsv}>Export CSV</button>
+				{/if}
+			</div>
+			{#if answers.length === 0}
+				<p class="muted">No responses yet.</p>
+			{:else}
+				<div class="sessions">
+					{#each sessionSummary() as sess}
+						<div class="session-row">
+							<span class="sess-name">{sess.name}</span>
+							<span class="sess-count muted"
+								>{sess.answers} answer{sess.answers !== 1 ? 's' : ''}</span
+							>
+						</div>
+					{/each}
+				</div>
+				<details class="raw-answers">
+					<summary>Raw answers</summary>
 					<table>
 						<thead>
 							<tr>
-								<th class="sortable" onclick={() => toggleSort('idx')}>
-									#{sortCol === 'idx' ? (sortDir === 1 ? ' ↑' : ' ↓') : ''}
-								</th>
-								<th>Question</th>
-								<th class="sortable" onclick={() => toggleSort('score')}>
-									Score{sortCol === 'score' ? (sortDir === 1 ? ' ↑' : ' ↓') : ''}
-								</th>
-								<th class="sortable" onclick={() => toggleSort('votes')}>
-									Votes{sortCol === 'votes' ? (sortDir === 1 ? ' ↑' : ' ↓') : ''}
-								</th>
+								<th>Session</th>
+								<th>Name</th>
+								<th>Q#</th>
+								<th>Answer</th>
 							</tr>
 						</thead>
 						<tbody>
-							{#each sortedAggregate as row}
+							{#each answers as a}
 								<tr>
-									<td class="mono">{row.idx + 1}</td>
-									<td>{row.question}</td>
-									<td class:positive={row.score > 0} class:negative={row.score < 0}>
-										{row.score > 0 ? '+' : ''}{row.score}
-									</td>
-									<td class="muted">{row.votes}</td>
+									<td class="mono">{a.sessionId.slice(0, 8)}</td>
+									<td>{a.name}</td>
+									<td>{a.qIndex + 1}</td>
+									<td>{a.answer}</td>
 								</tr>
 							{/each}
 						</tbody>
 					</table>
-				</section>
+				</details>
 			{/if}
+		</section>
 
-			<!-- Responses -->
-			<section class="card">
-				<div class="section-header">
-					<h2>Responses ({answers.length})</h2>
-					{#if answers.length > 0}
-						<button class="ghost" onclick={downloadAnswersCsv}>Export CSV</button>
-					{/if}
+		<!-- Relay management -->
+		<section class="card">
+			<div class="section-header">
+				<h2>Relay connections ({connectedCount}/{relayStatus.length})</h2>
+				<button
+					class="ghost"
+					onclick={() => {
+						if (!relayEditing) relayText = getRelays().join('\n');
+						relayEditing = !relayEditing;
+					}}
+				>
+					{relayEditing ? 'Cancel' : 'Manage'}
+				</button>
+			</div>
+			{#if !relayEditing}
+				<div class="relay-list">
+					{#each relayStatus as r}
+						<div class="relay-row">
+							<span class="dot sm" class:ok={r.ok}></span>
+							<span class="relay-url">{r.url}</span>
+						</div>
+					{/each}
 				</div>
-				{#if answers.length === 0}
-					<p class="muted">No responses yet.</p>
-				{:else}
-					<div class="sessions">
-						{#each sessionSummary() as sess}
-							<div class="session-row">
-								<span class="sess-name">{sess.name}</span>
-								<span class="sess-count muted"
-									>{sess.answers} answer{sess.answers !== 1 ? 's' : ''}</span
-								>
-							</div>
-						{/each}
-					</div>
-					<details class="raw-answers">
-						<summary>Raw answers</summary>
-						<table>
-							<thead>
-								<tr>
-									<th>Session</th>
-									<th>Name</th>
-									<th>Q#</th>
-									<th>Answer</th>
-								</tr>
-							</thead>
-							<tbody>
-								{#each answers as a}
-									<tr>
-										<td class="mono">{a.sessionId.slice(0, 8)}</td>
-										<td>{a.name}</td>
-										<td>{a.qIndex + 1}</td>
-										<td>{a.answer}</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
-					</details>
-				{/if}
-			</section>
-
-			<!-- Relay management -->
-			<section class="card">
-				<div class="section-header">
-					<h2>Relay connections ({connectedCount}/{relayStatus.length})</h2>
-					<button
-						class="ghost"
-						onclick={() => {
-							if (!relayEditing) relayText = getRelays().join('\n');
-							relayEditing = !relayEditing;
-						}}
-					>
-						{relayEditing ? 'Cancel' : 'Manage'}
-					</button>
+			{:else}
+				<p class="hint">One relay URL per line. Applies to all forms on this device.</p>
+				<textarea bind:value={relayText} rows={8} placeholder="wss://relay.example.com"></textarea>
+				<div class="relay-actions">
+					<button class="primary" onclick={saveRelays}>Save & reconnect</button>
+					<button class="ghost" onclick={resetRelayList}>Reset to defaults</button>
 				</div>
-				{#if !relayEditing}
-					<div class="relay-list">
-						{#each relayStatus as r}
-							<div class="relay-row">
-								<span class="dot sm" class:ok={r.ok}></span>
-								<span class="relay-url">{r.url}</span>
-							</div>
-						{/each}
-					</div>
-				{:else}
-					<p class="hint">
-						One relay URL per line. Applies to all forms on this device.
-					</p>
-					<textarea
-						bind:value={relayText}
-						rows={8}
-						placeholder="wss://relay.example.com"
-					></textarea>
-					<div class="relay-actions">
-						<button class="primary" onclick={saveRelays}>Save & reconnect</button>
-						<button class="ghost" onclick={resetRelayList}>Reset to defaults</button>
-					</div>
-				{/if}
-			</section>
+			{/if}
+		</section>
 	</PageLayout>
 {/if}
 
@@ -578,10 +581,18 @@
 		background: var(--surface2);
 	}
 
-	.label-chip.left { color: var(--danger); }
-	.label-chip.right { color: var(--success); }
-	.label-chip.up { color: var(--info); }
-	.label-chip.down { color: var(--warning); }
+	.label-chip.left {
+		color: var(--danger);
+	}
+	.label-chip.right {
+		color: var(--success);
+	}
+	.label-chip.up {
+		color: var(--info);
+	}
+	.label-chip.down {
+		color: var(--warning);
+	}
 
 	.cred-box {
 		margin-top: 1rem;
