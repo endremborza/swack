@@ -1,12 +1,10 @@
 <script lang="ts">
-	import { generateKeypair } from '$lib/nostr';
-	import { generateAesKey } from '$lib/crypto';
-	import { saveAdmin, getAllAdmins, deleteAdmin, deleteAnswersForForm, purgeAll } from '$lib/store';
+	import { getAllAdmins, deleteAdmin, deleteAnswersForForm, purgeAll } from '$lib/store';
 	import { onMount } from 'svelte';
 	import type { AdminRecord } from '$lib/types';
+	import { saveAdmin } from '$lib/store';
 
 	let existing: AdminRecord[] = $state([]);
-	let creating = $state(false);
 	let importJson = $state('');
 	let importError = $state('');
 	let purgeConfirm = $state(false);
@@ -15,14 +13,6 @@
 	onMount(async () => {
 		existing = await getAllAdmins();
 	});
-
-	async function createForm() {
-		creating = true;
-		const { privkeyHex, pubkey } = generateKeypair();
-		const configAesKey = generateAesKey();
-		await saveAdmin({ pubkey, privkeyHex, configAesKey });
-		window.location.href = `/admin#${pubkey}`;
-	}
 
 	async function importForm() {
 		importError = '';
@@ -67,9 +57,7 @@
 				and answers are end-to-end encrypted — no server, no database, no account required. Your
 				keys live in your browser.
 			</p>
-			<button class="primary create-btn" onclick={createForm} disabled={creating}>
-				{creating ? 'Creating…' : 'Create a new form'}
-			</button>
+			<a class="primary create-btn" href="/create">Create a new form</a>
 		</section>
 
 		<section class="how">
@@ -243,11 +231,8 @@
 	.create-btn {
 		font-size: 1rem;
 		padding: 0.75rem 1.75rem;
-	}
-
-	.create-btn:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
+		text-decoration: none;
+		display: inline-block;
 	}
 
 	.steps {

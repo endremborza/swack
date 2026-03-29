@@ -18,9 +18,15 @@
 		return fresh;
 	}
 
+	type AnswerToast = { status: 'ok' | 'partial' | 'failed'; retry: () => void } | null;
+
 	let phase: Phase = $state('loading');
+	let loadingMsg = $state('Connecting to relay pool…');
 	let errorMsg = $state('');
 	let config: FormConfig = $state({ ...DEFAULT_CONFIG });
+	let relayCount = $state(0);
+	let answerToast: AnswerToast = $state(null);
+	let toastTimer: ReturnType<typeof setTimeout> | null = null;
 	// displayOrder[i] = index into config.questions for the i-th card shown
 	let displayOrder: number[] = $state([]);
 	let currentIndex = $state(0);
@@ -93,6 +99,7 @@
 
 	onDestroy(() => {
 		pool?.destroy();
+		if (toastTimer) clearTimeout(toastTimer);
 	});
 
 	function shuffled(arr: number[]): number[] {
@@ -106,9 +113,32 @@
 
 	async function loadForm() {
 		pool = new NostrPool();
+		pool.onRelayStatusChange = (status) => {
+			relayCount = status.filter((r) => r.ok).length;
+		};
 		await pool.connect();
+		relayCount = pool.relayStatus.length; // total count before health check completes
 
+		const stillTryingTimer = setTimeout(() => {
+			if (phase === 'loading') loadingMsg = 'Still trying…';
+		}, 4000);
+
+		const timeoutTimer = setTimeout(() => {
+			if (phase === 'loading') {
+				clearTimeout(stillTryingTimer);
+				errorMsg =
+					'Could not load form. The relay pool may be unreachable, or the form may not exist.';
+				phase = 'error';
+			}
+		}, 8000);
+
+		let configLoaded = false;
 		const unsub = pool.subscribeConfig(serverPubkey, async (encryptedContent) => {
+			if (configLoaded) return;
+			configLoaded = true;
+			clearTimeout(stillTryingTimer);
+			clearTimeout(timeoutTimer);
+			unsub();
 			try {
 				const json = await decryptConfig(encryptedContent, configAesKey);
 				config = { ...DEFAULT_CONFIG, ...JSON.parse(json) };
@@ -124,16 +154,7 @@
 				errorMsg = 'Could not decrypt form config. The link may be malformed.';
 				phase = 'error';
 			}
-			unsub();
 		});
-
-		setTimeout(() => {
-			if (phase === 'loading') {
-				errorMsg =
-					'Could not load form. The relay pool may be unreachable, or the form may not exist.';
-				phase = 'error';
-			}
-		}, 12000);
 	}
 
 	function saveName() {
@@ -201,6 +222,14 @@
 		}, 8000);
 	}
 
+	function showToast(toast: AnswerToast) {
+		if (toastTimer) clearTimeout(toastTimer);
+		answerToast = toast;
+		if (toast && toast.status !== 'failed') {
+			toastTimer = setTimeout(() => { answerToast = null; }, 2500);
+		}
+	}
+
 	async function swipe(dir: SwipeDirection) {
 		if (!cardShown || phase !== 'surveying' || !isEnabled(dir)) return;
 		hintVisible = false;
@@ -217,7 +246,8 @@
 		motion.set({ x, y, rotation, opacity: 0 });
 		cardShown = false;
 
-		await submitAnswer(dir);
+		// Fire-and-forget: submit runs in background, animation advances independently
+		void submitAnswer(dir);
 
 		if (currentIndex + 1 >= config.questions.length) {
 			setTimeout(() => {
@@ -245,9 +275,29 @@
 			timestamp: Date.now()
 		});
 		try {
-			await pool.publishAnswer(serverPubkey, payload, ephemeralPrivkey);
+			const result = await pool.publishAnswer(serverPubkey, payload, ephemeralPrivkey);
+			const threshold = config.confirmThreshold ?? 2;
+			if (result.accepted >= threshold) {
+				showToast({ status: 'ok', retry: () => {} });
+			} else if (result.accepted > 0) {
+				showToast({ status: 'partial', retry: () => {} });
+			} else {
+				showToast({
+					status: 'failed',
+					retry: () => {
+						void pool?.publishAnswer(serverPubkey, payload, ephemeralPrivkey);
+						answerToast = null;
+					}
+				});
+			}
 		} catch {
-			// best-effort — continue survey even if publish fails
+			showToast({
+				status: 'failed',
+				retry: () => {
+					void pool?.publishAnswer(serverPubkey, payload, ephemeralPrivkey);
+					answerToast = null;
+				}
+			});
 		}
 	}
 
@@ -336,7 +386,12 @@
 
 <div class="page">
 	{#if phase === 'loading'}
-		<div class="center"><span class="muted">Connecting to relay pool…</span></div>
+		<div class="center">
+			<span class="muted">{loadingMsg}</span>
+			{#if relayCount > 0}
+				<span class="relay-hint">{relayCount} relays</span>
+			{/if}
+		</div>
 	{:else if phase === 'error'}
 		<div class="center">
 			<div class="error-box">
@@ -483,6 +538,21 @@
 				{currentIndex + 1} / {config.questions.length}
 			</div>
 		</div>
+
+		<!-- Answer status toast -->
+		{#if answerToast}
+			<div class="answer-toast" class:toast-ok={answerToast.status === 'ok'} class:toast-partial={answerToast.status === 'partial'} class:toast-failed={answerToast.status === 'failed'}>
+				{#if answerToast.status === 'ok'}
+					✓ Recorded
+				{:else if answerToast.status === 'partial'}
+					⚠ Partially recorded
+				{:else}
+					Connection issue — answer may not have been sent
+					<button class="retry-btn" onclick={answerToast.retry}>Retry</button>
+					<button class="dismiss-btn" onclick={() => { answerToast = null; }}>Dismiss</button>
+				{/if}
+			</div>
+		{/if}
 	{/if}
 </div>
 
@@ -838,5 +908,58 @@
 		font-size: 0.8125rem;
 		color: var(--text-muted);
 		margin-top: 1rem;
+	}
+
+	.relay-hint {
+		display: block;
+		font-size: 0.75rem;
+		color: var(--text-muted);
+		margin-top: 0.4rem;
+		opacity: 0.6;
+	}
+
+	.answer-toast {
+		position: fixed;
+		bottom: 1.5rem;
+		left: 50%;
+		transform: translateX(-50%);
+		padding: 0.5rem 1rem;
+		border-radius: 8px;
+		font-size: 0.8125rem;
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		z-index: 100;
+		max-width: calc(100vw - 2rem);
+		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+	}
+
+	.toast-ok {
+		background: color-mix(in srgb, var(--success) 15%, var(--surface));
+		border: 1px solid color-mix(in srgb, var(--success) 40%, var(--border));
+		color: var(--success);
+	}
+
+	.toast-partial {
+		background: color-mix(in srgb, var(--warning) 15%, var(--surface));
+		border: 1px solid color-mix(in srgb, var(--warning) 40%, var(--border));
+		color: var(--warning);
+	}
+
+	.toast-failed {
+		background: color-mix(in srgb, var(--danger) 15%, var(--surface));
+		border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--border));
+		color: var(--danger);
+	}
+
+	.retry-btn,
+	.dismiss-btn {
+		background: none;
+		border: 1px solid currentColor;
+		color: inherit;
+		font-size: 0.75rem;
+		padding: 0.2rem 0.5rem;
+		border-radius: 4px;
+		cursor: pointer;
 	}
 </style>

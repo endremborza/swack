@@ -1,18 +1,30 @@
-import { SimplePool, generateSecretKey, getPublicKey, finalizeEvent } from 'nostr-tools';
+import { SimplePool, generateSecretKey, getPublicKey, finalizeEvent, type VerifiedEvent } from 'nostr-tools';
 import { encrypt as nip44Encrypt, decrypt as nip44Decrypt, getConversationKey } from 'nostr-tools/nip44';
 import type { Filter } from 'nostr-tools';
 import { hexToBytes, bytesToHex } from './hex';
 import { getRelays, probeRelay } from './relays';
 
-const MIN_CONNECTED = 3;
+export const MIN_CONFIRMED = 3;
 const CONFIG_KIND = 33333;
 const AGGREGATE_KIND = 33334;
 const ANSWER_KIND = 4444;
+
+const ANSWER_PUBLISH_TIMEOUT_MS = 3000;
+const CONFIG_PUBLISH_TIMEOUT_MS = 8000;
+const HEALTH_INTERVAL_MS = 60_000;
 
 export interface Keypair {
 	privkeyHex: string;
 	pubkey: string;
 }
+
+export interface PublishResult {
+	accepted: number;
+	total: number;
+	relayResults: { url: string; ok: boolean }[];
+}
+
+export type RelayStatus = { url: string; ok: boolean };
 
 export function generateKeypair(): Keypair {
 	const privkey = generateSecretKey();
@@ -39,19 +51,73 @@ export function decryptAnswer(
 
 export class NostrPool {
 	private pool = new SimplePool();
-	private activeRelays: string[] = [];
-	relayStatus: { url: string; ok: boolean }[] = [];
+	private allRelays: string[] = [];
+	private healthTimer: ReturnType<typeof setInterval> | null = null;
+	relayStatus: RelayStatus[] = [];
+	onRelayStatusChange?: (status: RelayStatus[]) => void;
 
 	async connect(): Promise<void> {
-		const relays = getRelays();
-		this.relayStatus = await Promise.all(
-			relays.map(async (url) => ({ url, ok: await probeRelay(url) }))
-		);
-		const connected = this.relayStatus.filter((r) => r.ok).map((r) => r.url);
-		this.activeRelays = connected.length >= MIN_CONNECTED ? connected : relays;
+		if (this.healthTimer) clearInterval(this.healthTimer);
+		this.allRelays = getRelays();
+		this.relayStatus = this.allRelays.map((url) => ({ url, ok: false }));
+		void this.runHealthCheck();
+		this.healthTimer = setInterval(() => { void this.runHealthCheck(); }, HEALTH_INTERVAL_MS);
 	}
 
-	async publishConfig(privkeyHex: string, pubkey: string, encryptedContent: string): Promise<void> {
+	private async runHealthCheck(): Promise<void> {
+		const statuses = await Promise.all(
+			this.allRelays.map(async (url) => ({ url, ok: await probeRelay(url) }))
+		);
+		this.relayStatus = statuses;
+		this.onRelayStatusChange?.(statuses);
+	}
+
+	private get activeRelays(): string[] {
+		const healthy = this.relayStatus.filter((r) => r.ok).map((r) => r.url);
+		return healthy.length > 0 ? healthy : this.allRelays;
+	}
+
+	private async publishToRelays(
+		event: VerifiedEvent,
+		relays: string[],
+		timeoutMs: number,
+		onRelayResult?: (url: string, ok: boolean) => void
+	): Promise<PublishResult> {
+		if (relays.length === 0) return { accepted: 0, total: 0, relayResults: [] };
+
+		const publishPromises = this.pool.publish(relays, event);
+		const timedPromises = publishPromises.map((p, i) => {
+			const url = relays[i];
+			let settled = false;
+			const settle = (ok: boolean): { url: string; ok: boolean } => {
+				if (!settled) {
+					settled = true;
+					onRelayResult?.(url, ok);
+				}
+				return { url, ok };
+			};
+			return Promise.race([
+				p.then(() => settle(true)).catch(() => settle(false)),
+				new Promise<{ url: string; ok: boolean }>((resolve) =>
+					setTimeout(() => resolve(settle(false)), timeoutMs)
+				)
+			]);
+		});
+
+		const relayResults = await Promise.all(timedPromises);
+		return {
+			accepted: relayResults.filter((r) => r.ok).length,
+			total: relays.length,
+			relayResults
+		};
+	}
+
+	async publishConfig(
+		privkeyHex: string,
+		pubkey: string,
+		encryptedContent: string,
+		onRelayResult?: (url: string, ok: boolean) => void
+	): Promise<PublishResult> {
 		const event = finalizeEvent(
 			{
 				kind: CONFIG_KIND,
@@ -61,7 +127,7 @@ export class NostrPool {
 			},
 			hexToBytes(privkeyHex)
 		);
-		await Promise.any(this.pool.publish(this.activeRelays, event));
+		return this.publishToRelays(event, this.allRelays, CONFIG_PUBLISH_TIMEOUT_MS, onRelayResult);
 	}
 
 	async publishAggregate(
@@ -78,14 +144,14 @@ export class NostrPool {
 			},
 			hexToBytes(privkeyHex)
 		);
-		await Promise.any(this.pool.publish(this.activeRelays, event));
+		await this.publishToRelays(event, this.activeRelays, ANSWER_PUBLISH_TIMEOUT_MS).catch(() => {});
 	}
 
 	async publishAnswer(
 		serverPubkey: string,
 		payload: string,
 		ephemeralPrivkeyHex: string
-	): Promise<void> {
+	): Promise<PublishResult> {
 		const encrypted = encryptAnswer(ephemeralPrivkeyHex, serverPubkey, payload);
 		const event = finalizeEvent(
 			{
@@ -96,12 +162,12 @@ export class NostrPool {
 			},
 			hexToBytes(ephemeralPrivkeyHex)
 		);
-		await Promise.any(this.pool.publish(this.activeRelays, event));
+		return this.publishToRelays(event, this.activeRelays, ANSWER_PUBLISH_TIMEOUT_MS);
 	}
 
 	subscribeConfig(serverPubkey: string, onEvent: (encryptedContent: string) => void): () => void {
 		const filter: Filter = { kinds: [CONFIG_KIND], authors: [serverPubkey] };
-		const sub = this.pool.subscribeMany(this.activeRelays, filter, {
+		const sub = this.pool.subscribeMany(this.allRelays, filter, {
 			onevent(event) {
 				onEvent(event.content);
 			}
@@ -114,7 +180,7 @@ export class NostrPool {
 		onEvent: (encryptedContent: string) => void
 	): () => void {
 		const filter: Filter = { kinds: [AGGREGATE_KIND], authors: [serverPubkey] };
-		const sub = this.pool.subscribeMany(this.activeRelays, filter, {
+		const sub = this.pool.subscribeMany(this.allRelays, filter, {
 			onevent(event) {
 				onEvent(event.content);
 			}
@@ -128,7 +194,7 @@ export class NostrPool {
 		onAnswer: (payload: string, eventId: string, senderPubkey: string) => void
 	): () => void {
 		const filter: Filter = { kinds: [ANSWER_KIND], '#p': [serverPubkey] };
-		const sub = this.pool.subscribeMany(this.activeRelays, filter, {
+		const sub = this.pool.subscribeMany(this.allRelays, filter, {
 			onevent(event) {
 				try {
 					const payload = decryptAnswer(serverPrivkeyHex, event.pubkey, event.content);
@@ -142,6 +208,7 @@ export class NostrPool {
 	}
 
 	destroy(): void {
+		if (this.healthTimer) clearInterval(this.healthTimer);
 		this.pool.destroy();
 	}
 }

@@ -2,22 +2,17 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { NostrPool } from '$lib/nostr';
 	import { encryptConfig, decryptConfig } from '$lib/crypto';
-	import { getAdmin, saveAdmin, saveAnswer, getAnswersForForm } from '$lib/store';
+	import { getAdmin, saveAnswer, getAnswersForForm } from '$lib/store';
 	import { getRelays, setRelays, resetRelays } from '$lib/relays';
 	import { DEFAULT_CONFIG, type FormConfig, type AdminRecord, type AnswerRecord } from '$lib/types';
 
 	type Phase = 'loading' | 'ready' | 'not-found';
-	type SwipeLabelKey = 'swipeLeftLabel' | 'swipeRightLabel' | 'swipeUpLabel' | 'swipeDownLabel';
 
 	let phase: Phase = $state('loading');
 	let record: AdminRecord | null = $state(null);
 	let config: FormConfig = $state({ ...DEFAULT_CONFIG });
 	let answers: AnswerRecord[] = $state([]);
 	let copied = $state(false);
-	let publishStatus = $state('');
-	let batchOpen = $state(false);
-	let batchText = $state('');
-	let batchError = $state('');
 	let relayStatus: { url: string; ok: boolean }[] = $state([]);
 	let relayEditing = $state(false);
 	let relayText = $state('');
@@ -26,10 +21,7 @@
 
 	let pool: NostrPool | null = null;
 	let unsubAnswers: (() => void) | null = null;
-	let publishTimer: ReturnType<typeof setTimeout> | null = null;
 	let aggPublishTimer: ReturnType<typeof setTimeout> | null = null;
-
-	const MAX_QUESTIONS = 1000;
 
 	const connectedCount = $derived(relayStatus.filter((r) => r.ok).length);
 	const aggregate = $derived(computeAggregate());
@@ -61,24 +53,6 @@
 		await navigator.clipboard.writeText(json);
 		credCopied = 'json';
 		setTimeout(() => (credCopied = ''), 2000);
-	}
-
-	async function publishConfig() {
-		if (!pool || !record) return;
-		try {
-			const json = JSON.stringify(config);
-			const encrypted = await encryptConfig(json, record.configAesKey);
-			await pool.publishConfig(record.privkeyHex, record.pubkey, encrypted);
-			publishStatus = 'Saved';
-			setTimeout(() => (publishStatus = ''), 2000);
-		} catch {
-			publishStatus = 'Publish failed';
-		}
-	}
-
-	function schedulePublish() {
-		if (publishTimer) clearTimeout(publishTimer);
-		publishTimer = setTimeout(publishConfig, 800);
 	}
 
 	function computeAggregate(): { question: string; score: number; votes: number }[] | null {
@@ -121,32 +95,6 @@
 		aggPublishTimer = setTimeout(doPublishAggregate, 2000);
 	}
 
-	function updateLabel(key: SwipeLabelKey, value: string) {
-		config = { ...config, [key]: value };
-		schedulePublish();
-		scheduleAggregatePublish();
-	}
-
-	function updateAggregateVisibility(onCompletion: boolean) {
-		config = { ...config, aggregateVisibility: onCompletion ? 'on-completion' : 'admin-only' };
-		schedulePublish();
-		scheduleAggregatePublish();
-	}
-
-	async function updateName(value: string) {
-		config = { ...config, name: value };
-		if (record) {
-			record = { ...record, name: value };
-			await saveAdmin(record);
-		}
-		schedulePublish();
-	}
-
-	function updateRandomizeOrder(value: boolean) {
-		config = { ...config, randomizeOrder: value };
-		schedulePublish();
-	}
-
 	function exportCsv(content: string, filename: string) {
 		const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
 		const url = URL.createObjectURL(blob);
@@ -182,43 +130,6 @@
 		}
 		const csv = rows.map((r) => r.map((v) => `"${v.replace(/"/g, '""')}"`).join(',')).join('\n');
 		exportCsv(csv, 'aggregate.csv');
-	}
-
-	function addQuestion() {
-		if (config.questions.length >= MAX_QUESTIONS) return;
-		config.questions = [...config.questions, ''];
-		schedulePublish();
-	}
-
-	function removeQuestion(i: number) {
-		config.questions = config.questions.filter((_, idx) => idx !== i);
-		schedulePublish();
-	}
-
-	function updateQuestion(i: number, value: string) {
-		config.questions = config.questions.map((q, idx) => (idx === i ? value : q));
-		schedulePublish();
-	}
-
-	function applyBatch() {
-		batchError = '';
-		const lines = batchText
-			.split('\n')
-			.map((l) => l.trim())
-			.filter(Boolean);
-		if (lines.length === 0) {
-			batchError = 'No questions found.';
-			return;
-		}
-		const combined = [...config.questions, ...lines];
-		if (combined.length > MAX_QUESTIONS) {
-			batchError = `That would exceed ${MAX_QUESTIONS} questions (currently ${config.questions.length}, adding ${lines.length}).`;
-			return;
-		}
-		config.questions = combined;
-		batchText = '';
-		batchOpen = false;
-		schedulePublish();
 	}
 
 	async function saveRelays() {
@@ -258,6 +169,25 @@
 		}));
 	}
 
+	function numericLabelsSummary(): string {
+		return [
+			config.swipeLeftLabel && !isNaN(Number(config.swipeLeftLabel))
+				? `← ${config.swipeLeftLabel}`
+				: '',
+			config.swipeRightLabel && !isNaN(Number(config.swipeRightLabel))
+				? `→ ${config.swipeRightLabel}`
+				: '',
+			config.swipeUpLabel && !isNaN(Number(config.swipeUpLabel))
+				? `↑ ${config.swipeUpLabel}`
+				: '',
+			config.swipeDownLabel && !isNaN(Number(config.swipeDownLabel))
+				? `↓ ${config.swipeDownLabel}`
+				: ''
+		]
+			.filter(Boolean)
+			.join(', ');
+	}
+
 	onMount(async () => {
 		const pubkey = window.location.hash.slice(1);
 		if (!pubkey) {
@@ -275,17 +205,19 @@
 		answers = await getAnswersForForm(pubkey);
 
 		pool = new NostrPool();
+		pool.onRelayStatusChange = (status) => {
+			relayStatus = [...status];
+		};
 		await pool.connect();
 		relayStatus = [...pool.relayStatus];
 
-		const unsubConfig = pool.subscribeConfig(pubkey, async (encryptedContent) => {
+		pool.subscribeConfig(pubkey, async (encryptedContent) => {
 			try {
 				const json = await decryptConfig(encryptedContent, admin.configAesKey);
 				config = { ...DEFAULT_CONFIG, ...JSON.parse(json) };
 			} catch {
 				// ignore malformed
 			}
-			unsubConfig();
 		});
 
 		unsubAnswers = pool.subscribeAnswers(pubkey, admin.privkeyHex, async (payload, eventId) => {
@@ -306,35 +238,8 @@
 	onDestroy(() => {
 		unsubAnswers?.();
 		pool?.destroy();
-		if (publishTimer) clearTimeout(publishTimer);
 		if (aggPublishTimer) clearTimeout(aggPublishTimer);
 	});
-
-	const SWIPE_LABELS: { key: SwipeLabelKey; dir: string }[] = [
-		{ key: 'swipeLeftLabel', dir: '← Left' },
-		{ key: 'swipeRightLabel', dir: 'Right →' },
-		{ key: 'swipeUpLabel', dir: '↑ Up' },
-		{ key: 'swipeDownLabel', dir: '↓ Down (empty = disabled)' }
-	];
-
-	function numericLabelsSummary(): string {
-		return [
-			config.swipeLeftLabel && !isNaN(Number(config.swipeLeftLabel))
-				? `← ${config.swipeLeftLabel}`
-				: '',
-			config.swipeRightLabel && !isNaN(Number(config.swipeRightLabel))
-				? `→ ${config.swipeRightLabel}`
-				: '',
-			config.swipeUpLabel && !isNaN(Number(config.swipeUpLabel))
-				? `↑ ${config.swipeUpLabel}`
-				: '',
-			config.swipeDownLabel && !isNaN(Number(config.swipeDownLabel))
-				? `↓ ${config.swipeDownLabel}`
-				: ''
-		]
-			.filter(Boolean)
-			.join(', ');
-	}
 </script>
 
 <svelte:head>
@@ -351,29 +256,14 @@
 	<div class="page">
 		<header>
 			<a href="/" class="logo">Swack</a>
-			<span class="muted">Admin</span>
-			<div
-				class="relay-indicator"
-				title="{connectedCount}/{relayStatus.length} relays connected"
-			>
+			<span class="muted">{config.name || 'Admin'}</span>
+			<div class="relay-indicator" title="{connectedCount}/{relayStatus.length} relays connected">
 				<span class="dot" class:ok={connectedCount >= 3}></span>
 				{connectedCount}/{relayStatus.length} relays
 			</div>
 		</header>
 
 		<main>
-			<!-- Form name -->
-			<section class="card">
-				<h2>Form name</h2>
-				<input
-					type="text"
-					value={config.name}
-					oninput={(e) => updateName((e.target as HTMLInputElement).value)}
-					placeholder="Untitled form"
-				/>
-				<p class="hint">Shown to respondents and in your forms list.</p>
-			</section>
-
 			<!-- Share link -->
 			<section class="card">
 				<h2>Share link</h2>
@@ -384,13 +274,39 @@
 				<p class="hint">Anyone with this link can fill out the survey.</p>
 			</section>
 
+			<!-- Form info (read-only) -->
+			<section class="card">
+				<h2>Form</h2>
+				<dl class="form-info">
+					<dt>Name</dt>
+					<dd>{config.name || 'Untitled'}</dd>
+					<dt>Questions</dt>
+					<dd>{config.questions.length}</dd>
+					<dt>Swipe labels</dt>
+					<dd class="labels-row">
+						{#if config.swipeLeftLabel}<span class="label-chip left">← {config.swipeLeftLabel}</span>{/if}
+						{#if config.swipeRightLabel}<span class="label-chip right">→ {config.swipeRightLabel}</span>{/if}
+						{#if config.swipeUpLabel}<span class="label-chip up">↑ {config.swipeUpLabel}</span>{/if}
+						{#if config.swipeDownLabel}<span class="label-chip down">↓ {config.swipeDownLabel}</span>{/if}
+					</dd>
+					<dt>Settings</dt>
+					<dd>
+						{config.randomizeOrder ? 'Randomized order' : 'Fixed order'} ·
+						{config.aggregateVisibility === 'on-completion'
+							? 'Aggregate shown on completion'
+							: 'Aggregate admin-only'} ·
+						confirm ≥{config.confirmThreshold} relays
+					</dd>
+				</dl>
+				<p class="hint">Form config is immutable after publish. <a href="/create">Create a new form →</a></p>
+			</section>
+
 			<!-- Multi-device access -->
 			<section class="card">
 				<h2>Admin access on other devices</h2>
 				<p class="hint">
-					Your private key lives only in this browser. Open the same admin URL on another device by
-					exporting these credentials and importing them on the other machine via the Swack home
-					page.
+					Your private key lives only in this browser. Export credentials to access this form on
+					another device.
 				</p>
 				<button class="ghost" onclick={() => (showCredentials = !showCredentials)}>
 					{showCredentials ? 'Hide credentials' : 'Export credentials'}
@@ -398,8 +314,7 @@
 				{#if showCredentials}
 					<div class="cred-box">
 						<p class="cred-warn">
-							Anyone with the private key can publish config changes and decrypt all answers. Store
-							securely.
+							Anyone with the private key can decrypt all answers. Store securely.
 						</p>
 						{#each [
 							{ label: 'Public key (form ID)', key: 'pubkey', value: record.pubkey },
@@ -424,106 +339,6 @@
 							JSON.
 						</p>
 					</div>
-				{/if}
-			</section>
-
-			<!-- Swipe labels -->
-			<section class="card">
-				<h2>Swipe labels</h2>
-				<div class="labels-grid">
-					{#each SWIPE_LABELS as { key, dir }}
-						<label>
-							<span class="dir">{dir}</span>
-							<input
-								type="text"
-								value={config[key]}
-								oninput={(e) => updateLabel(key, (e.target as HTMLInputElement).value)}
-							/>
-						</label>
-					{/each}
-				</div>
-				<div class="aggregate-opt">
-					<label class="inline-label">
-						<input
-							type="checkbox"
-							checked={config.aggregateVisibility === 'on-completion'}
-							onchange={(e) =>
-								updateAggregateVisibility((e.target as HTMLInputElement).checked)}
-						/>
-						Show numeric aggregate to respondents after completion
-					</label>
-					<p class="hint">
-						When label values are numbers, respondents see a score summary on their done screen.
-					</p>
-				</div>
-				<div class="aggregate-opt">
-					<label class="inline-label">
-						<input
-							type="checkbox"
-							checked={config.randomizeOrder}
-							onchange={(e) => updateRandomizeOrder((e.target as HTMLInputElement).checked)}
-						/>
-						Randomize question order for each respondent
-					</label>
-				</div>
-			</section>
-
-			<!-- Questions -->
-			<section class="card">
-				<div class="section-header">
-					<h2>Questions ({config.questions.length}/{MAX_QUESTIONS})</h2>
-					<div class="actions">
-						{#if publishStatus}
-							<span class="status">{publishStatus}</span>
-						{/if}
-						<button class="ghost" onclick={() => (batchOpen = !batchOpen)}>
-							{batchOpen ? 'Close batch' : 'Batch import'}
-						</button>
-						<button
-							class="primary"
-							onclick={addQuestion}
-							disabled={config.questions.length >= MAX_QUESTIONS}
-						>
-							+ Add
-						</button>
-					</div>
-				</div>
-
-				{#if batchOpen}
-					<div class="batch-area">
-						<textarea
-							bind:value={batchText}
-							rows={6}
-							placeholder="One question per line (up to {MAX_QUESTIONS} total)…"
-						></textarea>
-						{#if batchError}
-							<p class="error">{batchError}</p>
-						{/if}
-						<button class="primary" onclick={applyBatch}>
-							Add {batchText.split('\n').filter((s) => s.trim()).length} questions
-						</button>
-					</div>
-				{/if}
-
-				<ol class="question-list">
-					{#each config.questions as q, i}
-						<li class="question-item">
-							<span class="q-num">{i + 1}</span>
-							<input
-								type="text"
-								value={q}
-								oninput={(e) => updateQuestion(i, (e.target as HTMLInputElement).value)}
-								placeholder="Question text…"
-							/>
-							<button class="danger-btn" onclick={() => removeQuestion(i)} aria-label="Remove"
-								>✕</button
-							>
-						</li>
-					{/each}
-				</ol>
-
-				{#if config.questions.length === 0}
-					<p class="empty-hint">No questions yet. Add one above or use batch import.</p>
 				{/if}
 			</section>
 
@@ -632,7 +447,7 @@
 					</div>
 				{:else}
 					<p class="hint">
-						One relay URL per line. Saved locally and applies to all forms on this device.
+						One relay URL per line. Applies to all forms on this device.
 					</p>
 					<textarea
 						bind:value={relayText}
@@ -755,6 +570,45 @@
 		color: var(--text-muted);
 	}
 
+	/* Form info */
+	.form-info {
+		display: grid;
+		grid-template-columns: auto 1fr;
+		gap: 0.4rem 1.25rem;
+		font-size: 0.875rem;
+		margin: 0;
+	}
+
+	dt {
+		color: var(--text-muted);
+		font-size: 0.8125rem;
+		align-self: start;
+		padding-top: 0.1rem;
+	}
+
+	dd {
+		margin: 0;
+	}
+
+	.labels-row {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.35rem;
+	}
+
+	.label-chip {
+		font-size: 0.75rem;
+		padding: 0.15rem 0.5rem;
+		border-radius: 4px;
+		border: 1px solid var(--border);
+		background: var(--surface2);
+	}
+
+	.label-chip.left { color: var(--danger); }
+	.label-chip.right { color: var(--success); }
+	.label-chip.up { color: var(--info); }
+	.label-chip.down { color: var(--warning); }
+
 	.cred-box {
 		margin-top: 1rem;
 		display: flex;
@@ -803,43 +657,6 @@
 		flex-shrink: 0;
 	}
 
-	.labels-grid {
-		display: grid;
-		grid-template-columns: repeat(2, 1fr);
-		gap: 0.75rem;
-	}
-
-	label {
-		display: flex;
-		flex-direction: column;
-		gap: 0.3rem;
-	}
-
-	.dir {
-		font-size: 0.8125rem;
-		color: var(--text-muted);
-	}
-
-	.aggregate-opt {
-		margin-top: 1rem;
-		padding-top: 1rem;
-		border-top: 1px solid var(--border);
-	}
-
-	.inline-label {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		flex-direction: row;
-		font-size: 0.875rem;
-		cursor: pointer;
-	}
-
-	.inline-label input[type='checkbox'] {
-		width: auto;
-		margin: 0;
-	}
-
 	.section-header {
 		display: flex;
 		align-items: center;
@@ -851,58 +668,6 @@
 
 	.section-header h2 {
 		margin: 0;
-	}
-
-	.actions {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-	}
-
-	.status {
-		font-size: 0.8125rem;
-		color: var(--success);
-	}
-
-	.batch-area {
-		margin-bottom: 1rem;
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-	}
-
-	.error {
-		font-size: 0.8125rem;
-		color: var(--danger);
-		margin: 0;
-	}
-
-	.question-list {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-	}
-
-	.question-item {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-	}
-
-	.q-num {
-		font-size: 0.75rem;
-		color: var(--text-muted);
-		min-width: 1.5rem;
-		text-align: right;
-	}
-
-	.empty-hint {
-		font-size: 0.875rem;
-		color: var(--text-muted);
-		margin: 0.5rem 0 0;
 	}
 
 	.sessions {
@@ -996,11 +761,5 @@
 		display: flex;
 		gap: 0.5rem;
 		margin-top: 0.75rem;
-	}
-
-	@media (max-width: 480px) {
-		.labels-grid {
-			grid-template-columns: 1fr;
-		}
 	}
 </style>
