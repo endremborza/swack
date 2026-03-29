@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { base } from '$app/paths';
+	import { resolve } from '$app/paths';
 	import { onMount, onDestroy } from 'svelte';
 	import { Spring } from 'svelte/motion';
 	import { NostrPool, generateKeypair } from '$lib/nostr';
@@ -7,7 +7,12 @@
 	import { randomName } from '$lib/names';
 	import { DEFAULT_CONFIG, type FormConfig, type SwipeDirection } from '$lib/types';
 
-	type Phase = 'loading' | 'naming' | 'surveying' | 'done' | 'error';
+	type Phase = 'loading' | 'naming' | 'surveying' | 'done' | 'error' | 'resume';
+
+	interface SavedFill {
+		timestamp: number;
+		answers: { qIndex: number; answer: SwipeDirection }[];
+	}
 
 	const NAME_KEY = 'swack_name';
 
@@ -42,9 +47,12 @@
 	let aggregateData: { question: string; score: number; votes: number }[] | null = $state(null);
 	let aggregateLoading = $state(false);
 
-	const sessionId = crypto.randomUUID();
-	const { privkeyHex: ephemeralPrivkey, pubkey: ephemeralPubkey } = generateKeypair();
-	void ephemeralPubkey;
+	let sessionId = crypto.randomUUID();
+	let ephemeralPrivkey = generateKeypair().privkeyHex;
+
+	let savedFill: SavedFill | null = $state(null);
+	let showReview = $state(false);
+	let localAnswers: { qIndex: number; answer: SwipeDirection }[] = [];
 
 	let serverPubkey = '';
 	let configAesKey = '';
@@ -150,7 +158,17 @@
 				}
 				const indices = config.questions.map((_, i) => i);
 				displayOrder = config.randomizeOrder ? shuffled(indices) : indices;
-				if (config.nameMode === 'required') {
+				const savedStr = localStorage.getItem(`swack_filled_${serverPubkey}`);
+				if (savedStr) {
+					try {
+						savedFill = JSON.parse(savedStr);
+					} catch {
+						// ignore malformed
+					}
+				}
+				if (savedFill) {
+					phase = 'resume';
+				} else if (config.nameMode === 'required') {
 					nameInput = name;
 					phase = 'naming';
 				} else {
@@ -161,6 +179,41 @@
 				phase = 'error';
 			}
 		});
+	}
+
+	function directionLabel(dir: SwipeDirection): string {
+		const labels: Record<SwipeDirection, string> = {
+			Left: config.swipeLeftLabel,
+			Right: config.swipeRightLabel,
+			Up: config.swipeUpLabel,
+			Down: config.swipeDownLabel
+		};
+		return labels[dir] ?? dir;
+	}
+
+	function directionColor(dir: SwipeDirection): string {
+		return { Left: 'var(--danger)', Right: 'var(--success)', Up: 'var(--info)', Down: 'var(--warning)' }[
+			dir
+		];
+	}
+
+	function fillAgain() {
+		localStorage.removeItem(`swack_filled_${serverPubkey}`);
+		localAnswers = [];
+		savedFill = null;
+		showReview = false;
+		sessionId = crypto.randomUUID();
+		ephemeralPrivkey = generateKeypair().privkeyHex;
+		const indices = config.questions.map((_, i) => i);
+		displayOrder = config.randomizeOrder ? shuffled(indices) : indices;
+		currentIndex = 0;
+		cardShown = true;
+		if (config.nameMode === 'required') {
+			nameInput = name;
+			phase = 'naming';
+		} else {
+			phase = 'surveying';
+		}
 	}
 
 	function saveName() {
@@ -264,9 +317,14 @@
 
 		// Fire-and-forget: submit runs in background, animation advances independently
 		void submitAnswer(dir);
+		localAnswers.push({ qIndex: displayOrder[currentIndex] ?? currentIndex, answer: dir });
 
 		if (currentIndex + 1 >= config.questions.length) {
 			setTimeout(() => {
+				localStorage.setItem(
+					`swack_filled_${serverPubkey}`,
+					JSON.stringify({ timestamp: Date.now(), answers: localAnswers })
+				);
 				phase = 'done';
 				fetchAggregate();
 			}, 400);
@@ -424,7 +482,31 @@
 		<div class="center">
 			<div class="error-box">
 				<p>{errorMsg}</p>
-				<a href="{base}/">← Home</a>
+				<a href={resolve('/')}>← Home</a>
+			</div>
+		</div>
+	{:else if phase === 'resume' && savedFill}
+		<div class="center">
+			<div class="done-box">
+				<h2>You've filled this form before</h2>
+				<p class="muted">Last filled {new Date(savedFill.timestamp).toLocaleDateString()}</p>
+				{#if showReview}
+					<div class="review-list">
+						{#each savedFill.answers.sort((a, b) => a.qIndex - b.qIndex) as a}
+							<div class="review-row">
+								<span class="review-q">{config.questions[a.qIndex] ?? `Q${a.qIndex + 1}`}</span>
+								<span class="review-ans" style="color: {directionColor(a.answer)}"
+									>{directionLabel(a.answer)}</span
+								>
+							</div>
+						{/each}
+					</div>
+				{:else}
+					<div class="resume-btns">
+						<button class="ghost" onclick={() => (showReview = true)}>Review answers</button>
+					</div>
+				{/if}
+				<button class="primary" onclick={fillAgain}>Fill again</button>
 			</div>
 		</div>
 	{:else if phase === 'done'}
@@ -432,7 +514,9 @@
 			<div class="done-box">
 				<div class="done-icon">✓</div>
 				<h2>All done!</h2>
-				<p class="muted">Your answers have been submitted as <strong>{name}</strong>.</p>
+				{#if config.nameMode !== 'disabled'}
+					<p class="muted">Your answers have been submitted as <strong>{name}</strong>.</p>
+				{/if}
 				{#if config.aggregateVisibility === 'on-completion'}
 					<div class="aggregate-section">
 						{#if aggregateLoading}
@@ -472,19 +556,21 @@
 			{/if}
 
 			<!-- Name badge -->
-			<div class="name-bar">
-				{#if editingName}
-					<input
-						class="name-input"
-						bind:value={nameInput}
-						onblur={saveName}
-						onkeydown={(e) => e.key === 'Enter' && saveName()}
-					/>
-				{:else}
-					<span class="name-text">{name}</span>
-					<button class="name-edit" onclick={startEditingName} aria-label="Change name">✎</button>
-				{/if}
-			</div>
+			{#if config.nameMode !== 'disabled'}
+				<div class="name-bar">
+					{#if editingName}
+						<input
+							class="name-input"
+							bind:value={nameInput}
+							onblur={saveName}
+							onkeydown={(e) => e.key === 'Enter' && saveName()}
+						/>
+					{:else}
+						<span class="name-text">{name}</span>
+						<button class="name-edit" onclick={startEditingName} aria-label="Change name">✎</button>
+					{/if}
+				</div>
+			{/if}
 
 			<!-- Direction labels (appear during swipe) -->
 			{#if isEnabled('Left')}
@@ -1029,5 +1115,44 @@
 		width: 100%;
 		font-size: 1rem;
 		padding: 0.65rem 1.5rem;
+	}
+
+	.resume-btns {
+		display: flex;
+		gap: 0.75rem;
+		justify-content: center;
+		margin-bottom: 0.5rem;
+	}
+
+	.review-list {
+		width: 100%;
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+		margin: 0.5rem 0;
+		max-height: 50dvh;
+		overflow-y: auto;
+		text-align: left;
+	}
+
+	.review-row {
+		display: flex;
+		align-items: baseline;
+		gap: 0.75rem;
+		padding: 0.4rem 0.5rem;
+		background: var(--surface2);
+		border-radius: 6px;
+		font-size: 0.875rem;
+	}
+
+	.review-q {
+		flex: 1;
+		color: var(--text);
+	}
+
+	.review-ans {
+		font-weight: 600;
+		font-size: 0.8125rem;
+		white-space: nowrap;
 	}
 </style>

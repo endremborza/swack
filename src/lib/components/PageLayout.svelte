@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { base } from '$app/paths';
+	import { resolve } from '$app/paths';
 	import type { Snippet } from 'svelte';
 
 	let {
@@ -15,7 +15,7 @@
 
 <div class="page">
 	<header>
-		<a href="{base}/" class="logo">Swack</a>
+		<a href={resolve('/')} class="logo">Swack</a>
 		<span class="muted">{subtitle}</span>
 		{#if headerEnd}
 			{@render headerEnd()}

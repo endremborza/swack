@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { base } from '$app/paths';
+	import { resolve } from '$app/paths';
 	import PageLayout from '$lib/components/PageLayout.svelte';
 	import { NostrPool, generateKeypair, MIN_CONFIRMED } from '$lib/nostr';
 	import { encryptConfig } from '$lib/crypto';
@@ -117,7 +117,7 @@
 		await saveAdmin({ pubkey, privkeyHex, configAesKey, name: config.name || undefined });
 
 		publishedPubkey = pubkey;
-		shareLink = `${window.location.origin}${base}/fill#${pubkey}_${configAesKey}`;
+		shareLink = `${window.location.origin}${resolve('/fill')}#${pubkey}_${configAesKey}`;
 		phase = 'done';
 	}
 
@@ -384,7 +384,7 @@
 				</button>
 			</div>
 			<p class="hint">Share this link with respondents.</p>
-			<a class="primary admin-link" href={`${base}/admin#${publishedPubkey}`}>Open admin →</a>
+			<a class="primary admin-link" href={resolve('/admin') + '#' + publishedPubkey}>Open admin →</a>
 		</section>
 	{:else if phase === 'failed'}
 		<section class="card result-card">

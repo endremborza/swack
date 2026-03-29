@@ -4,7 +4,7 @@
 	import { NostrPool } from '$lib/nostr';
 	import { encryptConfig, decryptConfig } from '$lib/crypto';
 	import { getAdmin, saveAnswer, getAnswersForForm } from '$lib/store';
-	import { base } from '$app/paths';
+	import { resolve } from '$app/paths';
 	import { getRelays, setRelays, resetRelays } from '$lib/relays';
 	import { DEFAULT_CONFIG, type FormConfig, type AdminRecord, type AnswerRecord } from '$lib/types';
 
@@ -18,6 +18,7 @@
 	let relayStatus: { url: string; ok: boolean }[] = $state([]);
 	let relayEditing = $state(false);
 	let relayText = $state('');
+	let disclaimerOpen = $state(false);
 	let showCredentials = $state(false);
 	let credCopied = $state('');
 
@@ -46,7 +47,7 @@
 
 	function fillUrl(): string {
 		if (!record) return '';
-		return `${window.location.origin}${base}/fill#${record.pubkey}_${record.configAesKey}`;
+		return `${window.location.origin}${resolve('/fill')}#${record.pubkey}_${record.configAesKey}`;
 	}
 
 	async function copyText(text: string, key: string) {
@@ -277,7 +278,7 @@
 	<div class="center"><span class="muted">Loading…</span></div>
 {:else if phase === 'not-found'}
 	<div class="center">
-		<p class="muted">Form not found in this browser. <a href="{base}/">Go home</a></p>
+		<p class="muted">Form not found in this browser. <a href={resolve('/')}>Go home</a></p>
 	</div>
 {:else if phase === 'ready' && record}
 	<PageLayout subtitle={config.name || 'Admin'}>
@@ -287,6 +288,24 @@
 				{connectedCount}/{relayStatus.length} relays
 			</div>
 		{/snippet}
+		<!-- Backend notice -->
+		<section class="card notice-card">
+			<div class="notice-bar">
+				<p class="notice-text">Keep this page open (or open it regularly) to receive answers.</p>
+				<button class="ghost small" onclick={() => (disclaimerOpen = !disclaimerOpen)}>
+					{disclaimerOpen ? 'Less' : 'Why?'}
+				</button>
+			</div>
+			{#if disclaimerOpen}
+				<p class="notice-detail">
+					Answers are delivered via Nostr relays — they arrive only while this page is
+					subscribed. Relays hold events temporarily, so opening regularly ensures nothing is
+					missed. You can export credentials to another device or person (see "Admin access on
+					other devices" below) to share this responsibility.
+				</p>
+			{/if}
+		</section>
+
 		<!-- Share link -->
 		<section class="card">
 			<h2>Share link</h2>
@@ -325,7 +344,7 @@
 				</dd>
 			</dl>
 			<p class="hint">
-				Form config is immutable after publish. <a href="{base}/create">Create a new form →</a>
+				Form config is immutable after publish. <a href={resolve('/create')}>Create a new form →</a>
 			</p>
 		</section>
 
@@ -752,5 +771,29 @@
 		display: flex;
 		gap: 0.5rem;
 		margin-top: 0.75rem;
+	}
+
+	.notice-card {
+		border-color: color-mix(in srgb, var(--info) 25%, var(--border));
+	}
+
+	.notice-bar {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+	}
+
+	.notice-text {
+		flex: 1;
+		margin: 0;
+		font-size: 0.875rem;
+		color: var(--text-muted);
+	}
+
+	.notice-detail {
+		margin: 0.75rem 0 0;
+		font-size: 0.8125rem;
+		color: var(--text-muted);
+		line-height: 1.6;
 	}
 </style>
