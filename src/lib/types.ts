@@ -17,8 +17,8 @@ export const DEFAULT_CONFIG: FormConfig = {
 	swipeUpLabel: 'skip',
 	swipeDownLabel: '',
 	questions: [],
-	aggregateVisibility: 'admin-only',
-	randomizeOrder: false,
+	aggregateVisibility: 'on-completion',
+	randomizeOrder: true,
 	confirmThreshold: 2
 };
 
