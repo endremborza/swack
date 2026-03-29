@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { generateKeypair } from '$lib/nostr';
 	import { generateAesKey } from '$lib/crypto';
-	import { saveAdmin, getAllAdmins } from '$lib/store';
+	import { saveAdmin, getAllAdmins, deleteAdmin, deleteAnswersForForm, purgeAll } from '$lib/store';
 	import { onMount } from 'svelte';
 	import type { AdminRecord } from '$lib/types';
 
@@ -9,6 +9,7 @@
 	let creating = $state(false);
 	let importJson = $state('');
 	let importError = $state('');
+	let purgeConfirm = $state(false);
 	const importPlaceholder = '{"pubkey":"...","privkeyHex":"...","configAesKey":"..."}';
 
 	onMount(async () => {
@@ -28,11 +29,23 @@
 		try {
 			const data = JSON.parse(importJson.trim());
 			if (!data.pubkey || !data.privkeyHex || !data.configAesKey) throw new Error('Missing fields');
-			await saveAdmin({ pubkey: data.pubkey, privkeyHex: data.privkeyHex, configAesKey: data.configAesKey });
+			await saveAdmin({ pubkey: data.pubkey, privkeyHex: data.privkeyHex, configAesKey: data.configAesKey, name: data.name });
 			window.location.href = `/admin#${data.pubkey}`;
 		} catch {
 			importError = 'Invalid JSON. Copy the full export from the admin page.';
 		}
+	}
+
+	async function deleteForm(pubkey: string) {
+		await deleteAdmin(pubkey);
+		await deleteAnswersForForm(pubkey);
+		existing = await getAllAdmins();
+	}
+
+	async function doPurge() {
+		await purgeAll();
+		existing = [];
+		purgeConfirm = false;
 	}
 </script>
 
@@ -107,13 +120,30 @@
 
 		{#if existing.length > 0}
 			<section class="existing">
-				<h2>Your forms</h2>
+				<div class="existing-header">
+					<h2>Your forms</h2>
+					{#if purgeConfirm}
+						<span class="purge-confirm">
+							Purge all data?
+							<button class="danger-btn" onclick={doPurge}>Yes, delete everything</button>
+							<button class="ghost" onclick={() => (purgeConfirm = false)}>Cancel</button>
+						</span>
+					{:else}
+						<button class="ghost small" onclick={() => (purgeConfirm = true)}>Purge all</button>
+					{/if}
+				</div>
 				<ul>
 					{#each existing as form}
 						<li>
 							<a href={`/admin#${form.pubkey}`}>
-								<span class="pubkey">{form.pubkey.slice(0, 16)}…</span>
+								{#if form.name}
+									<span class="form-name">{form.name}</span>
+									<span class="pubkey muted">{form.pubkey.slice(0, 12)}…</span>
+								{:else}
+									<span class="pubkey">{form.pubkey.slice(0, 16)}…</span>
+								{/if}
 							</a>
+							<button class="danger-btn small" onclick={() => deleteForm(form.pubkey)} aria-label="Delete form">✕</button>
 						</li>
 					{/each}
 				</ul>
@@ -260,6 +290,27 @@
 		line-height: 1.6;
 	}
 
+	.existing-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin-bottom: 1.5rem;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+	}
+
+	.existing-header h2 {
+		margin: 0;
+	}
+
+	.purge-confirm {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		font-size: 0.8125rem;
+		color: var(--text-muted);
+	}
+
 	.existing ul {
 		list-style: none;
 		margin: 0;
@@ -274,11 +325,39 @@
 		border: 1px solid var(--border);
 		border-radius: 8px;
 		padding: 0.75rem 1rem;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+	}
+
+	.existing li a {
+		display: flex;
+		align-items: baseline;
+		gap: 0.5rem;
+		flex: 1;
+		min-width: 0;
+	}
+
+	.form-name {
+		font-size: 0.9rem;
+		font-weight: 500;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 
 	.pubkey {
 		font-family: ui-monospace, monospace;
-		font-size: 0.875rem;
+		font-size: 0.8rem;
+	}
+
+	.muted {
+		color: var(--text-muted);
+	}
+
+	button.small {
+		padding: 0.25rem 0.5rem;
+		font-size: 0.75rem;
 	}
 
 	.import-section details {

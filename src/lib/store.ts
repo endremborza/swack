@@ -50,3 +50,19 @@ export async function saveAnswer(record: AnswerRecord): Promise<void> {
 export async function getAnswersForForm(formPubkey: string): Promise<AnswerRecord[]> {
 	return (await getDb()).getAllFromIndex('answers', 'by-form', formPubkey);
 }
+
+export async function deleteAdmin(pubkey: string): Promise<void> {
+	await (await getDb()).delete('admins', pubkey);
+}
+
+export async function deleteAnswersForForm(formPubkey: string): Promise<void> {
+	const d = await getDb();
+	const keys = await d.getAllKeysFromIndex('answers', 'by-form', formPubkey);
+	await Promise.all(keys.map((k) => d.delete('answers', k)));
+}
+
+export async function purgeAll(): Promise<void> {
+	db = null;
+	indexedDB.deleteDatabase('swack');
+	localStorage.clear();
+}

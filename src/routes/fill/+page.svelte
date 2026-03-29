@@ -21,6 +21,8 @@
 	let phase: Phase = $state('loading');
 	let errorMsg = $state('');
 	let config: FormConfig = $state({ ...DEFAULT_CONFIG });
+	// displayOrder[i] = index into config.questions for the i-th card shown
+	let displayOrder: number[] = $state([]);
 	let currentIndex = $state(0);
 	let cardShown = $state(true);
 	let swipeDir: SwipeDirection | null = $state(null);
@@ -93,6 +95,15 @@
 		pool?.destroy();
 	});
 
+	function shuffled(arr: number[]): number[] {
+		const a = [...arr];
+		for (let i = a.length - 1; i > 0; i--) {
+			const j = Math.floor(Math.random() * (i + 1));
+			[a[i], a[j]] = [a[j], a[i]];
+		}
+		return a;
+	}
+
 	async function loadForm() {
 		pool = new NostrPool();
 		await pool.connect();
@@ -106,6 +117,8 @@
 					phase = 'error';
 					return;
 				}
+				const indices = config.questions.map((_, i) => i);
+				displayOrder = config.randomizeOrder ? shuffled(indices) : indices;
 				phase = 'surveying';
 			} catch {
 				errorMsg = 'Could not decrypt form config. The link may be malformed.';
@@ -227,7 +240,7 @@
 		const payload = JSON.stringify({
 			sessionId,
 			name,
-			qIndex: currentIndex,
+			qIndex: displayOrder[currentIndex] ?? currentIndex,
 			answer,
 			timestamp: Date.now()
 		});
@@ -318,7 +331,7 @@
 </script>
 
 <svelte:head>
-	<title>Swack</title>
+	<title>{config.name || 'Swack'}</title>
 </svelte:head>
 
 <div class="page">
@@ -373,6 +386,11 @@
 		</div>
 	{:else if phase === 'surveying'}
 		<div class="survey">
+			<!-- Form name -->
+			{#if config.name}
+				<div class="form-title">{config.name}</div>
+			{/if}
+
 			<!-- Name badge -->
 			<div class="name-bar">
 				{#if editingName}
@@ -452,7 +470,7 @@
 							</div>
 						{/if}
 
-						<p class="question">{config.questions[currentIndex]}</p>
+						<p class="question">{config.questions[displayOrder[currentIndex] ?? currentIndex]}</p>
 
 						{#if hintVisible}
 							<p class="hint">Swipe or use arrow keys</p>
@@ -573,6 +591,21 @@
 		align-items: center;
 		justify-content: center;
 		user-select: none;
+	}
+
+	/* Form title */
+	.form-title {
+		position: absolute;
+		top: 0.75rem;
+		left: 0.75rem;
+		font-size: 0.8rem;
+		font-weight: 600;
+		color: var(--text-muted);
+		z-index: 10;
+		max-width: 40%;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 
 	/* Name badge */

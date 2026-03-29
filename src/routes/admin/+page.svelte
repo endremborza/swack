@@ -2,7 +2,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { NostrPool } from '$lib/nostr';
 	import { encryptConfig, decryptConfig } from '$lib/crypto';
-	import { getAdmin, saveAnswer, getAnswersForForm } from '$lib/store';
+	import { getAdmin, saveAdmin, saveAnswer, getAnswersForForm } from '$lib/store';
 	import { getRelays, setRelays, resetRelays } from '$lib/relays';
 	import { DEFAULT_CONFIG, type FormConfig, type AdminRecord, type AnswerRecord } from '$lib/types';
 
@@ -54,7 +54,7 @@
 	async function copyExportJson() {
 		if (!record) return;
 		const json = JSON.stringify(
-			{ pubkey: record.pubkey, privkeyHex: record.privkeyHex, configAesKey: record.configAesKey },
+			{ pubkey: record.pubkey, privkeyHex: record.privkeyHex, configAesKey: record.configAesKey, name: record.name },
 			null,
 			2
 		);
@@ -131,6 +131,57 @@
 		config = { ...config, aggregateVisibility: onCompletion ? 'on-completion' : 'admin-only' };
 		schedulePublish();
 		scheduleAggregatePublish();
+	}
+
+	async function updateName(value: string) {
+		config = { ...config, name: value };
+		if (record) {
+			record = { ...record, name: value };
+			await saveAdmin(record);
+		}
+		schedulePublish();
+	}
+
+	function updateRandomizeOrder(value: boolean) {
+		config = { ...config, randomizeOrder: value };
+		schedulePublish();
+	}
+
+	function exportCsv(content: string, filename: string) {
+		const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement('a');
+		a.href = url;
+		a.download = filename;
+		a.click();
+		URL.revokeObjectURL(url);
+	}
+
+	function downloadAnswersCsv() {
+		const rows = [['session_id', 'name', 'q_index', 'question', 'answer', 'timestamp']];
+		for (const a of answers) {
+			rows.push([
+				a.sessionId,
+				a.name,
+				String(a.qIndex + 1),
+				config.questions[a.qIndex] ?? '',
+				a.answer,
+				new Date(a.timestamp).toISOString()
+			]);
+		}
+		const csv = rows.map((r) => r.map((v) => `"${v.replace(/"/g, '""')}"`).join(',')).join('\n');
+		exportCsv(csv, 'answers.csv');
+	}
+
+	function downloadAggregateCsv() {
+		const agg = computeAggregate();
+		if (!agg) return;
+		const rows = [['q_index', 'question', 'score', 'votes']];
+		for (let i = 0; i < agg.length; i++) {
+			rows.push([String(i + 1), agg[i].question, String(agg[i].score), String(agg[i].votes)]);
+		}
+		const csv = rows.map((r) => r.map((v) => `"${v.replace(/"/g, '""')}"`).join(',')).join('\n');
+		exportCsv(csv, 'aggregate.csv');
 	}
 
 	function addQuestion() {
@@ -287,7 +338,7 @@
 </script>
 
 <svelte:head>
-	<title>Admin — Swack</title>
+	<title>{config.name ? `${config.name} — Admin` : 'Admin'} — Swack</title>
 </svelte:head>
 
 {#if phase === 'loading'}
@@ -311,6 +362,18 @@
 		</header>
 
 		<main>
+			<!-- Form name -->
+			<section class="card">
+				<h2>Form name</h2>
+				<input
+					type="text"
+					value={config.name}
+					oninput={(e) => updateName((e.target as HTMLInputElement).value)}
+					placeholder="Untitled form"
+				/>
+				<p class="hint">Shown to respondents and in your forms list.</p>
+			</section>
+
 			<!-- Share link -->
 			<section class="card">
 				<h2>Share link</h2>
@@ -393,6 +456,16 @@
 						When label values are numbers, respondents see a score summary on their done screen.
 					</p>
 				</div>
+				<div class="aggregate-opt">
+					<label class="inline-label">
+						<input
+							type="checkbox"
+							checked={config.randomizeOrder}
+							onchange={(e) => updateRandomizeOrder((e.target as HTMLInputElement).checked)}
+						/>
+						Randomize question order for each respondent
+					</label>
+				</div>
 			</section>
 
 			<!-- Questions -->
@@ -457,7 +530,10 @@
 			<!-- Aggregate scores -->
 			{#if aggregate}
 				<section class="card">
-					<h2>Aggregate scores</h2>
+					<div class="section-header">
+						<h2>Aggregate scores</h2>
+						<button class="ghost" onclick={downloadAggregateCsv}>Export CSV</button>
+					</div>
 					<p class="hint">Numeric directions: {numericLabelsSummary()}</p>
 					<table>
 						<thead>
@@ -486,7 +562,12 @@
 
 			<!-- Responses -->
 			<section class="card">
-				<h2>Responses ({answers.length})</h2>
+				<div class="section-header">
+					<h2>Responses ({answers.length})</h2>
+					{#if answers.length > 0}
+						<button class="ghost" onclick={downloadAnswersCsv}>Export CSV</button>
+					{/if}
+				</div>
 				{#if answers.length === 0}
 					<p class="muted">No responses yet.</p>
 				{:else}
