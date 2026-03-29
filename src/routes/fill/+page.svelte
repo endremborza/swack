@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { base } from '$app/paths';
 	import { onMount, onDestroy } from 'svelte';
 	import { Spring } from 'svelte/motion';
 	import { NostrPool, generateKeypair } from '$lib/nostr';
@@ -396,7 +397,7 @@
 		<div class="center">
 			<div class="error-box">
 				<p>{errorMsg}</p>
-				<a href="/">← Home</a>
+				<a href="{base}/">← Home</a>
 			</div>
 		</div>
 	{:else if phase === 'done'}

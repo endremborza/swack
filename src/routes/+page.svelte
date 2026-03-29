@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { base } from '$app/paths';
 	import { getAllAdmins, deleteAdmin, deleteAnswersForForm, purgeAll } from '$lib/store';
 	import { onMount } from 'svelte';
 	import type { AdminRecord } from '$lib/types';
@@ -20,7 +21,7 @@
 			const data = JSON.parse(importJson.trim());
 			if (!data.pubkey || !data.privkeyHex || !data.configAesKey) throw new Error('Missing fields');
 			await saveAdmin({ pubkey: data.pubkey, privkeyHex: data.privkeyHex, configAesKey: data.configAesKey, name: data.name });
-			window.location.href = `/admin#${data.pubkey}`;
+			window.location.href = `${base}/admin#${data.pubkey}`;
 		} catch {
 			importError = 'Invalid JSON. Copy the full export from the admin page.';
 		}
@@ -57,7 +58,7 @@
 				and answers are end-to-end encrypted — no server, no database, no account required. Your
 				keys live in your browser.
 			</p>
-			<a class="primary create-btn" href="/create">Create a new form</a>
+			<a class="primary create-btn" href="{base}/create">Create a new form</a>
 		</section>
 
 		<section class="how">
@@ -123,7 +124,7 @@
 				<ul>
 					{#each existing as form}
 						<li>
-							<a href={`/admin#${form.pubkey}`}>
+							<a href={`${base}/admin#${form.pubkey}`}>
 								{#if form.name}
 									<span class="form-name">{form.name}</span>
 									<span class="pubkey muted">{form.pubkey.slice(0, 12)}…</span>

@@ -3,6 +3,7 @@
 	import { NostrPool } from '$lib/nostr';
 	import { encryptConfig, decryptConfig } from '$lib/crypto';
 	import { getAdmin, saveAnswer, getAnswersForForm } from '$lib/store';
+	import { base } from '$app/paths';
 	import { getRelays, setRelays, resetRelays } from '$lib/relays';
 	import { DEFAULT_CONFIG, type FormConfig, type AdminRecord, type AnswerRecord } from '$lib/types';
 
@@ -28,7 +29,7 @@
 
 	function fillUrl(): string {
 		if (!record) return '';
-		return `${window.location.origin}/fill#${record.pubkey}_${record.configAesKey}`;
+		return `${window.location.origin}${base}/fill#${record.pubkey}_${record.configAesKey}`;
 	}
 
 	async function copyText(text: string, key: string) {
@@ -250,12 +251,12 @@
 	<div class="center"><span class="muted">Loading…</span></div>
 {:else if phase === 'not-found'}
 	<div class="center">
-		<p class="muted">Form not found in this browser. <a href="/">Go home</a></p>
+		<p class="muted">Form not found in this browser. <a href="{base}/">Go home</a></p>
 	</div>
 {:else if phase === 'ready' && record}
 	<div class="page">
 		<header>
-			<a href="/" class="logo">Swack</a>
+			<a href="{base}/" class="logo">Swack</a>
 			<span class="muted">{config.name || 'Admin'}</span>
 			<div class="relay-indicator" title="{connectedCount}/{relayStatus.length} relays connected">
 				<span class="dot" class:ok={connectedCount >= 3}></span>
@@ -298,7 +299,7 @@
 						confirm ≥{config.confirmThreshold} relays
 					</dd>
 				</dl>
-				<p class="hint">Form config is immutable after publish. <a href="/create">Create a new form →</a></p>
+				<p class="hint">Form config is immutable after publish. <a href="{base}/create">Create a new form →</a></p>
 			</section>
 
 			<!-- Multi-device access -->

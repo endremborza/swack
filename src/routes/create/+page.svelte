@@ -1,8 +1,10 @@
 <script lang="ts">
+	import { base } from '$app/paths';
 	import { NostrPool, generateKeypair, MIN_CONFIRMED } from '$lib/nostr';
 	import { encryptConfig } from '$lib/crypto';
 	import { saveAdmin } from '$lib/store';
 	import { generateAesKey } from '$lib/crypto';
+	import { getRelays, setRelays } from '$lib/relays';
 	import { DEFAULT_CONFIG, type FormConfig } from '$lib/types';
 
 	type CreatePhase = 'building' | 'publishing' | 'done' | 'failed';
@@ -14,6 +16,7 @@
 	let batchText = $state('');
 	let batchError = $state('');
 	let advancedOpen = $state(false);
+	let relayText = $state(getRelays().join('\n'));
 
 	// publish state
 	let relayConfirms: { url: string; status: 'pending' | 'ok' | 'fail' }[] = $state([]);
@@ -77,9 +80,12 @@
 		const configAesKey = generateAesKey();
 
 		const pool = new NostrPool();
-		await pool.connect();
+		await pool.connect(true);
 
-		relayConfirms = pool.relayStatus.map((r) => ({ url: r.url, status: 'pending' as const }));
+		relayConfirms = pool.relayStatus.map((r) => ({
+			url: r.url,
+			status: r.ok ? ('pending' as const) : ('fail' as const)
+		}));
 
 		let encryptedContent: string;
 		try {
@@ -109,7 +115,7 @@
 		await saveAdmin({ pubkey, privkeyHex, configAesKey, name: config.name || undefined });
 
 		publishedPubkey = pubkey;
-		shareLink = `${window.location.origin}/fill#${pubkey}_${configAesKey}`;
+		shareLink = `${window.location.origin}${base}/fill#${pubkey}_${configAesKey}`;
 		phase = 'done';
 	}
 
@@ -118,6 +124,12 @@
 		relayConfirms = [];
 		acceptedCount = 0;
 	}
+
+	function applyRelays() {
+		const urls = relayText.split('\n').map((l) => l.trim()).filter(Boolean);
+		if (urls.length > 0) setRelays(urls);
+	}
+
 </script>
 
 <svelte:head>
@@ -126,7 +138,7 @@
 
 <div class="page">
 	<header>
-		<a href="/" class="logo">Swack</a>
+		<a href="{base}/" class="logo">Swack</a>
 		<span class="muted">New form</span>
 	</header>
 
@@ -288,6 +300,16 @@
 									})}
 							/>
 						</label>
+						<label class="adv-label" style="margin-top:1rem">
+							<span>Relays</span>
+							<p class="hint">One relay URL per line. Applies to all forms on this device.</p>
+							<textarea
+								rows={8}
+								bind:value={relayText}
+								onblur={applyRelays}
+								placeholder="wss://relay.example.com"
+							></textarea>
+						</label>
 					</div>
 				{/if}
 			</section>
@@ -295,13 +317,18 @@
 			<!-- Publish -->
 			<section class="card publish-card">
 				{#if phase === 'building'}
-					<button
-						class="primary publish-btn"
-						onclick={publish}
-						disabled={config.questions.length === 0}
-					>
-						Publish form
-					</button>
+					<div class="publish-row">
+						<button
+							class="primary publish-btn"
+							onclick={publish}
+							disabled={config.questions.length === 0}
+						>
+							Publish form
+						</button>
+						<p class="publish-warn">
+							Once published, the form cannot be changed. This keeps it tamper-proof and free to host.
+						</p>
+					</div>
 					{#if config.questions.length === 0}
 						<p class="hint">Add at least one question to publish.</p>
 					{/if}
@@ -354,7 +381,7 @@
 					</button>
 				</div>
 				<p class="hint">Share this link with respondents.</p>
-				<a class="primary admin-link" href={`/admin#${publishedPubkey}`}>Open admin →</a>
+				<a class="primary admin-link" href={`${base}/admin#${publishedPubkey}`}>Open admin →</a>
 			</section>
 		{:else if phase === 'failed'}
 			<section class="card result-card">
@@ -564,9 +591,26 @@
 		gap: 0.75rem;
 	}
 
+	.publish-row {
+		display: flex;
+		align-items: flex-start;
+		gap: 1rem;
+		flex-wrap: wrap;
+	}
+
 	.publish-btn {
 		font-size: 1rem;
 		padding: 0.75rem 1.75rem;
+		flex-shrink: 0;
+	}
+
+	.publish-warn {
+		font-size: 0.8125rem;
+		color: var(--warning);
+		margin: 0;
+		max-width: 28rem;
+		line-height: 1.5;
+		align-self: center;
 	}
 
 	/* Relay confirmation */

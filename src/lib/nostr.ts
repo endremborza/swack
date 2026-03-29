@@ -56,11 +56,13 @@ export class NostrPool {
 	relayStatus: RelayStatus[] = [];
 	onRelayStatusChange?: (status: RelayStatus[]) => void;
 
-	async connect(): Promise<void> {
+	async connect(waitForHealth = false): Promise<void> {
 		if (this.healthTimer) clearInterval(this.healthTimer);
 		this.allRelays = getRelays();
 		this.relayStatus = this.allRelays.map((url) => ({ url, ok: false }));
-		void this.runHealthCheck();
+		const healthPromise = this.runHealthCheck();
+		if (waitForHealth) await healthPromise;
+		else void healthPromise;
 		this.healthTimer = setInterval(() => { void this.runHealthCheck(); }, HEALTH_INTERVAL_MS);
 	}
 
@@ -127,7 +129,7 @@ export class NostrPool {
 			},
 			hexToBytes(privkeyHex)
 		);
-		return this.publishToRelays(event, this.allRelays, CONFIG_PUBLISH_TIMEOUT_MS, onRelayResult);
+		return this.publishToRelays(event, this.activeRelays, CONFIG_PUBLISH_TIMEOUT_MS, onRelayResult);
 	}
 
 	async publishAggregate(
