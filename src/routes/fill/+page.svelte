@@ -331,6 +331,22 @@
 		if (dir) swipe(dir);
 	}
 
+	function applyDragOffset(dx: number, dy: number) {
+		motion.set({ x: dx, y: dy, rotation: dx * 0.08, opacity: 1 });
+		swipeDir = directionFromOffset(dx, dy);
+	}
+
+	function finishDrag(dx: number, dy: number) {
+		dragging = false;
+		const dir = directionFromOffset(dx, dy);
+		if (dir) {
+			swipe(dir);
+		} else {
+			motion.set({ x: 0, y: 0, rotation: 0, opacity: 1 });
+			swipeDir = null;
+		}
+	}
+
 	function handleMouseDown(e: MouseEvent) {
 		dragStartX = e.clientX;
 		dragStartY = e.clientY;
@@ -339,25 +355,12 @@
 
 	function handleMouseMove(e: MouseEvent) {
 		if (!dragging) return;
-		const dx = e.clientX - dragStartX;
-		const dy = e.clientY - dragStartY;
-		const rot = dx * 0.08;
-		motion.set({ x: dx, y: dy, rotation: rot, opacity: 1 });
-		swipeDir = directionFromOffset(dx, dy);
+		applyDragOffset(e.clientX - dragStartX, e.clientY - dragStartY);
 	}
 
 	function handleMouseUp(e: MouseEvent) {
 		if (!dragging) return;
-		dragging = false;
-		const dx = e.clientX - dragStartX;
-		const dy = e.clientY - dragStartY;
-		const dir = directionFromOffset(dx, dy);
-		if (dir) {
-			swipe(dir);
-		} else {
-			motion.set({ x: 0, y: 0, rotation: 0, opacity: 1 });
-			swipeDir = null;
-		}
+		finishDrag(e.clientX - dragStartX, e.clientY - dragStartY);
 	}
 
 	function handleTouchStart(e: TouchEvent) {
@@ -370,25 +373,13 @@
 	function handleTouchMove(e: TouchEvent) {
 		if (!dragging) return;
 		const t = e.touches[0];
-		const dx = t.clientX - dragStartX;
-		const dy = t.clientY - dragStartY;
-		motion.set({ x: dx, y: dy, rotation: dx * 0.08, opacity: 1 });
-		swipeDir = directionFromOffset(dx, dy);
+		applyDragOffset(t.clientX - dragStartX, t.clientY - dragStartY);
 	}
 
 	function handleTouchEnd(e: TouchEvent) {
 		if (!dragging) return;
-		dragging = false;
 		const t = e.changedTouches[0];
-		const dx = t.clientX - dragStartX;
-		const dy = t.clientY - dragStartY;
-		const dir = directionFromOffset(dx, dy);
-		if (dir) {
-			swipe(dir);
-		} else {
-			motion.set({ x: 0, y: 0, rotation: 0, opacity: 1 });
-			swipeDir = null;
-		}
+		finishDrag(t.clientX - dragStartX, t.clientY - dragStartY);
 	}
 
 	const hl = $derived(highlightFor(swipeDir));
@@ -600,10 +591,6 @@
 		align-items: center;
 		justify-content: center;
 		flex: 1;
-	}
-
-	.muted {
-		color: var(--text-muted);
 	}
 
 	.error-box {

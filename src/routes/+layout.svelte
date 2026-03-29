@@ -103,4 +103,8 @@
 	:global(a:hover) {
 		text-decoration: underline;
 	}
+
+	:global(.muted) {
+		color: var(--text-muted);
+	}
 </style>

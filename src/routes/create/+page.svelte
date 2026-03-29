@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { base } from '$app/paths';
+	import PageLayout from '$lib/components/PageLayout.svelte';
 	import { NostrPool, generateKeypair, MIN_CONFIRMED } from '$lib/nostr';
 	import { encryptConfig } from '$lib/crypto';
 	import { saveAdmin } from '$lib/store';
@@ -137,14 +138,8 @@
 	<title>Create a form — Swack</title>
 </svelte:head>
 
-<div class="page">
-	<header>
-		<a href="{base}/" class="logo">Swack</a>
-		<span class="muted">New form</span>
-	</header>
-
-	<main>
-		{#if phase === 'building' || phase === 'publishing'}
+<PageLayout subtitle="New form">
+	{#if phase === 'building' || phase === 'publishing'}
 			<!-- Form name -->
 			<section class="card">
 				<h2>Form name</h2>
@@ -415,45 +410,9 @@
 				<button class="primary" onclick={retryPublish}>Edit and retry</button>
 			</section>
 		{/if}
-	</main>
-</div>
+</PageLayout>
 
 <style>
-	.page {
-		display: flex;
-		flex-direction: column;
-		min-height: 100dvh;
-	}
-
-	header {
-		padding: 1rem 2rem;
-		display: flex;
-		align-items: center;
-		gap: 0.75rem;
-		border-bottom: 1px solid var(--border);
-		background: var(--surface);
-	}
-
-	.logo {
-		font-size: 1.2rem;
-		font-weight: 700;
-		color: var(--accent);
-	}
-
-	.muted {
-		color: var(--text-muted);
-	}
-
-	main {
-		max-width: 780px;
-		margin: 0 auto;
-		padding: 2rem 1.5rem 4rem;
-		width: 100%;
-		display: flex;
-		flex-direction: column;
-		gap: 1.5rem;
-	}
-
 	.card {
 		background: var(--surface);
 		border: 1px solid var(--border);

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
+	import PageLayout from '$lib/components/PageLayout.svelte';
 	import { NostrPool } from '$lib/nostr';
 	import { encryptConfig, decryptConfig } from '$lib/crypto';
 	import { getAdmin, saveAnswer, getAnswersForForm } from '$lib/store';
@@ -96,11 +97,9 @@
 	}
 
 	async function doPublishAggregate() {
-		if (!pool || !record || config.aggregateVisibility === 'admin-only') return;
-		const agg = computeAggregate();
-		if (!agg) return;
+		if (!pool || !record || config.aggregateVisibility === 'admin-only' || !aggregate) return;
 		try {
-			const json = JSON.stringify({ updatedAt: Date.now(), questions: agg });
+			const json = JSON.stringify({ updatedAt: Date.now(), questions: aggregate });
 			const encrypted = await encryptConfig(json, record.configAesKey);
 			await pool.publishAggregate(record.privkeyHex, record.pubkey, encrypted);
 		} catch {
@@ -112,6 +111,10 @@
 		if (config.aggregateVisibility === 'admin-only' || !pool || !record) return;
 		if (aggPublishTimer) clearTimeout(aggPublishTimer);
 		aggPublishTimer = setTimeout(doPublishAggregate, 2000);
+	}
+
+	function rowsToCsv(rows: string[][]): string {
+		return rows.map((r) => r.map((v) => `"${v.replace(/"/g, '""')}"`).join(',')).join('\n');
 	}
 
 	function exportCsv(content: string, filename: string) {
@@ -136,19 +139,16 @@
 				new Date(a.timestamp).toISOString()
 			]);
 		}
-		const csv = rows.map((r) => r.map((v) => `"${v.replace(/"/g, '""')}"`).join(',')).join('\n');
-		exportCsv(csv, 'answers.csv');
+		exportCsv(rowsToCsv(rows), 'answers.csv');
 	}
 
 	function downloadAggregateCsv() {
-		const agg = computeAggregate();
-		if (!agg) return;
+		if (!aggregate) return;
 		const rows = [['q_index', 'question', 'score', 'votes']];
-		for (let i = 0; i < agg.length; i++) {
-			rows.push([String(i + 1), agg[i].question, String(agg[i].score), String(agg[i].votes)]);
+		for (let i = 0; i < aggregate.length; i++) {
+			rows.push([String(i + 1), aggregate[i].question, String(aggregate[i].score), String(aggregate[i].votes)]);
 		}
-		const csv = rows.map((r) => r.map((v) => `"${v.replace(/"/g, '""')}"`).join(',')).join('\n');
-		exportCsv(csv, 'aggregate.csv');
+		exportCsv(rowsToCsv(rows), 'aggregate.csv');
 	}
 
 	async function saveRelays() {
@@ -272,17 +272,13 @@
 		<p class="muted">Form not found in this browser. <a href="{base}/">Go home</a></p>
 	</div>
 {:else if phase === 'ready' && record}
-	<div class="page">
-		<header>
-			<a href="{base}/" class="logo">Swack</a>
-			<span class="muted">{config.name || 'Admin'}</span>
+	<PageLayout subtitle={config.name || 'Admin'}>
+		{#snippet headerEnd()}
 			<div class="relay-indicator" title="{connectedCount}/{relayStatus.length} relays connected">
 				<span class="dot" class:ok={connectedCount >= 3}></span>
 				{connectedCount}/{relayStatus.length} relays
 			</div>
-		</header>
-
-		<main>
+		{/snippet}
 			<!-- Share link -->
 			<section class="card">
 				<h2>Share link</h2>
@@ -485,37 +481,15 @@
 					</div>
 				{/if}
 			</section>
-		</main>
-	</div>
+	</PageLayout>
 {/if}
 
 <style>
-	.page {
-		display: flex;
-		flex-direction: column;
-		min-height: 100dvh;
-	}
-
 	.center {
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		min-height: 100dvh;
-	}
-
-	header {
-		padding: 1rem 2rem;
-		display: flex;
-		align-items: center;
-		gap: 0.75rem;
-		border-bottom: 1px solid var(--border);
-		background: var(--surface);
-	}
-
-	.logo {
-		font-size: 1.2rem;
-		font-weight: 700;
-		color: var(--accent);
 	}
 
 	.relay-indicator {
@@ -544,30 +518,11 @@
 		height: 7px;
 	}
 
-	main {
-		max-width: 780px;
-		margin: 0 auto;
-		padding: 2rem 1.5rem 4rem;
-		width: 100%;
-		display: flex;
-		flex-direction: column;
-		gap: 1.5rem;
-	}
-
 	.card {
 		background: var(--surface);
 		border: 1px solid var(--border);
 		border-radius: 10px;
 		padding: 1.5rem;
-	}
-
-	h2 {
-		font-size: 0.8125rem;
-		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		color: var(--text-muted);
-		margin: 0 0 1rem;
 	}
 
 	.link-row {
@@ -586,12 +541,6 @@
 		font-family: ui-monospace, monospace;
 		font-size: 0.8rem;
 		word-break: break-all;
-		color: var(--text-muted);
-	}
-
-	.hint {
-		margin: 0.5rem 0 0;
-		font-size: 0.8125rem;
 		color: var(--text-muted);
 	}
 
@@ -718,10 +667,6 @@
 
 	.sess-count {
 		font-size: 0.8125rem;
-	}
-
-	.muted {
-		color: var(--text-muted);
 	}
 
 	.raw-answers summary {
