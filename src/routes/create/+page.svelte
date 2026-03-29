@@ -128,10 +128,12 @@
 	}
 
 	function applyRelays() {
-		const urls = relayText.split('\n').map((l) => l.trim()).filter(Boolean);
+		const urls = relayText
+			.split('\n')
+			.map((l) => l.trim())
+			.filter(Boolean);
 		if (urls.length > 0) setRelays(urls);
 	}
-
 </script>
 
 <svelte:head>
@@ -140,276 +142,266 @@
 
 <PageLayout subtitle="New form">
 	{#if phase === 'building' || phase === 'publishing'}
-			<!-- Form name -->
-			<section class="card">
-				<h2>Form name</h2>
-				<input
-					type="text"
-					value={config.name}
-					oninput={(e) => (config = { ...config, name: (e.target as HTMLInputElement).value })}
-					placeholder="Untitled form"
-					disabled={phase === 'publishing'}
-				/>
-				<p class="hint">Shown to respondents.</p>
-			</section>
+		<!-- Form name -->
+		<section class="card">
+			<h2>Form name</h2>
+			<input
+				type="text"
+				value={config.name}
+				oninput={(e) => (config = { ...config, name: (e.target as HTMLInputElement).value })}
+				placeholder="Untitled form"
+				disabled={phase === 'publishing'}
+			/>
+			<p class="hint">Shown to respondents.</p>
+		</section>
 
-			<!-- Swipe labels -->
-			<section class="card">
-				<h2>Swipe labels</h2>
-				<div class="labels-grid">
-					{#each SWIPE_LABELS as { key, dir }}
-						<label>
-							<span class="dir">{dir}</span>
-							<input
-								type="text"
-								value={config[key]}
-								oninput={(e) => updateLabel(key, (e.target as HTMLInputElement).value)}
-								disabled={phase === 'publishing'}
-							/>
-						</label>
-					{/each}
-				</div>
-				<div class="aggregate-opt">
-					<label class="inline-label">
+		<!-- Swipe labels -->
+		<section class="card">
+			<h2>Swipe labels</h2>
+			<div class="labels-grid">
+				{#each SWIPE_LABELS as { key, dir }}
+					<label>
+						<span class="dir">{dir}</span>
 						<input
-							type="checkbox"
-							checked={config.aggregateVisibility === 'on-completion'}
-							onchange={(e) =>
-								(config = {
-									...config,
-									aggregateVisibility: (e.target as HTMLInputElement).checked
-										? 'on-completion'
-										: 'admin-only'
-								})}
+							type="text"
+							value={config[key]}
+							oninput={(e) => updateLabel(key, (e.target as HTMLInputElement).value)}
 							disabled={phase === 'publishing'}
 						/>
-						Show numeric aggregate to respondents after completion
 					</label>
-				</div>
-				<div class="aggregate-opt">
-					<label class="inline-label">
-						<input
-							type="checkbox"
-							checked={config.randomizeOrder}
-							onchange={(e) =>
-								(config = { ...config, randomizeOrder: (e.target as HTMLInputElement).checked })}
-							disabled={phase === 'publishing'}
-						/>
-						Randomize question order for each respondent
-					</label>
-				</div>
-				<div class="aggregate-opt">
-					<label class="inline-label">
-						<input
-							type="checkbox"
-							checked={config.nameMode === 'required'}
-							onchange={(e) =>
-								(config = {
-									...config,
-									nameMode: (e.target as HTMLInputElement).checked ? 'required' : 'disabled'
-								})}
-							disabled={phase === 'publishing'}
-						/>
-						Require respondents to enter their name before starting
-					</label>
-				</div>
-			</section>
+				{/each}
+			</div>
+			<div class="aggregate-opt">
+				<label class="inline-label">
+					<input
+						type="checkbox"
+						checked={config.aggregateVisibility === 'on-completion'}
+						onchange={(e) =>
+							(config = {
+								...config,
+								aggregateVisibility: (e.target as HTMLInputElement).checked
+									? 'on-completion'
+									: 'admin-only'
+							})}
+						disabled={phase === 'publishing'}
+					/>
+					Show numeric aggregate to respondents after completion
+				</label>
+			</div>
+			<div class="aggregate-opt">
+				<label class="inline-label">
+					<input
+						type="checkbox"
+						checked={config.randomizeOrder}
+						onchange={(e) =>
+							(config = { ...config, randomizeOrder: (e.target as HTMLInputElement).checked })}
+						disabled={phase === 'publishing'}
+					/>
+					Randomize question order for each respondent
+				</label>
+			</div>
+			<div class="aggregate-opt">
+				<label class="inline-label">
+					<input
+						type="checkbox"
+						checked={config.nameMode === 'required'}
+						onchange={(e) =>
+							(config = {
+								...config,
+								nameMode: (e.target as HTMLInputElement).checked ? 'required' : 'disabled'
+							})}
+						disabled={phase === 'publishing'}
+					/>
+					Require respondents to enter their name before starting
+				</label>
+			</div>
+		</section>
 
-			<!-- Questions -->
-			<section class="card">
-				<div class="section-header">
-					<h2>Questions ({config.questions.length}/{MAX_QUESTIONS})</h2>
-					<div class="actions">
-						<button
-							class="ghost"
-							onclick={() => (batchOpen = !batchOpen)}
-							disabled={phase === 'publishing'}
-						>
-							{batchOpen ? 'Close batch' : 'Batch import'}
-						</button>
-						<button
-							class="primary"
-							onclick={addQuestion}
-							disabled={config.questions.length >= MAX_QUESTIONS || phase === 'publishing'}
-						>
-							+ Add
-						</button>
-					</div>
-				</div>
-
-				{#if batchOpen}
-					<div class="batch-area">
-						<textarea
-							bind:value={batchText}
-							rows={6}
-							placeholder="One question per line…"
-						></textarea>
-						{#if batchError}
-							<p class="error">{batchError}</p>
-						{/if}
-						<button class="primary" onclick={applyBatch}>
-							Add {batchText.split('\n').filter((s) => s.trim()).length} questions
-						</button>
-					</div>
-				{/if}
-
-				<ol class="question-list">
-					{#each config.questions as q, i}
-						<li class="question-item">
-							<span class="q-num">{i + 1}</span>
-							<input
-								type="text"
-								value={q}
-								oninput={(e) => updateQuestion(i, (e.target as HTMLInputElement).value)}
-								placeholder="Question text…"
-								disabled={phase === 'publishing'}
-							/>
-							<button
-								class="danger-btn"
-								onclick={() => removeQuestion(i)}
-								disabled={phase === 'publishing'}
-								aria-label="Remove"
-							>✕</button>
-						</li>
-					{/each}
-				</ol>
-
-				{#if config.questions.length === 0}
-					<p class="empty-hint">No questions yet.</p>
-				{/if}
-			</section>
-
-			<!-- Advanced -->
-			<section class="card">
-				<button
-					class="advanced-toggle"
-					onclick={() => (advancedOpen = !advancedOpen)}
-					disabled={phase === 'publishing'}
-				>
-					{advancedOpen ? '− Advanced options' : '+ Advanced options'}
-				</button>
-				{#if advancedOpen}
-					<div class="advanced-body">
-						<label class="adv-label">
-							<span>Relay confirmation threshold</span>
-							<p class="hint">
-								Number of relays that must accept each answer before showing a green status to
-								respondents. Default: 2.
-							</p>
-							<input
-								type="number"
-								min={1}
-								max={20}
-								value={config.confirmThreshold}
-								oninput={(e) =>
-									(config = {
-										...config,
-										confirmThreshold: Math.max(
-											1,
-											parseInt((e.target as HTMLInputElement).value) || 2
-										)
-									})}
-							/>
-						</label>
-						<label class="adv-label" style="margin-top:1rem">
-							<span>Relays</span>
-							<p class="hint">One relay URL per line. Applies to all forms on this device.</p>
-							<textarea
-								rows={8}
-								bind:value={relayText}
-								onblur={applyRelays}
-								placeholder="wss://relay.example.com"
-							></textarea>
-						</label>
-					</div>
-				{/if}
-			</section>
-
-			<!-- Publish -->
-			<section class="card publish-card">
-				{#if phase === 'building'}
-					<div class="publish-row">
-						<button
-							class="primary publish-btn"
-							onclick={publish}
-							disabled={config.questions.length === 0}
-						>
-							Publish form
-						</button>
-						<p class="publish-warn">
-							Once published, the form cannot be changed. This keeps it tamper-proof and free to host.
-						</p>
-					</div>
-					{#if config.questions.length === 0}
-						<p class="hint">Add at least one question to publish.</p>
-					{/if}
-				{:else}
-					<!-- publishing phase: relay confirmations -->
-					<h2>Publishing to relays…</h2>
-					<div class="relay-confirm-list">
-						{#each relayConfirms as r}
-							<div class="relay-confirm-row">
-								<span
-									class="dot"
-									class:ok={r.status === 'ok'}
-									class:fail={r.status === 'fail'}
-									class:pending={r.status === 'pending'}
-								></span>
-								<span class="relay-url">{r.url}</span>
-								<span class="relay-status-text">
-									{#if r.status === 'ok'}✓{:else if r.status === 'fail'}✗{:else}…{/if}
-								</span>
-							</div>
-						{/each}
-					</div>
-					<p class="confirm-count">
-						{acceptedCount} / {relayConfirms.length} confirmed
-						{#if acceptedCount >= MIN_CONFIRMED}
-							<span class="ok-text">— sufficient</span>
-						{/if}
-					</p>
-				{/if}
-			</section>
-		{:else if phase === 'done'}
-			<section class="card result-card">
-				<div class="result-icon">✓</div>
-				<h2>Form published</h2>
-				{#if acceptedCount < MIN_CONFIRMED}
-					<p class="warn-text">
-						Only {acceptedCount} relay{acceptedCount !== 1 ? 's' : ''} confirmed. The form may not be
-						reachable for some respondents. You can re-publish later from the admin page.
-					</p>
-				{:else}
-					<p class="hint">Confirmed on {acceptedCount} relays.</p>
-				{/if}
-				<div class="link-row">
-					<span class="link-text">{shareLink}</span>
+		<!-- Questions -->
+		<section class="card">
+			<div class="section-header">
+				<h2>Questions ({config.questions.length}/{MAX_QUESTIONS})</h2>
+				<div class="actions">
+					<button
+						class="ghost"
+						onclick={() => (batchOpen = !batchOpen)}
+						disabled={phase === 'publishing'}
+					>
+						{batchOpen ? 'Close batch' : 'Batch import'}
+					</button>
 					<button
 						class="primary"
-						onclick={() => navigator.clipboard.writeText(shareLink)}
+						onclick={addQuestion}
+						disabled={config.questions.length >= MAX_QUESTIONS || phase === 'publishing'}
 					>
-						Copy
+						+ Add
 					</button>
 				</div>
-				<p class="hint">Share this link with respondents.</p>
-				<a class="primary admin-link" href={`${base}/admin#${publishedPubkey}`}>Open admin →</a>
-			</section>
-		{:else if phase === 'failed'}
-			<section class="card result-card">
-				<div class="result-icon fail-icon">✗</div>
-				<h2>Publish failed</h2>
-				<p class="error">{publishError}</p>
+			</div>
+
+			{#if batchOpen}
+				<div class="batch-area">
+					<textarea bind:value={batchText} rows={6} placeholder="One question per line…"></textarea>
+					{#if batchError}
+						<p class="error">{batchError}</p>
+					{/if}
+					<button class="primary" onclick={applyBatch}>
+						Add {batchText.split('\n').filter((s) => s.trim()).length} questions
+					</button>
+				</div>
+			{/if}
+
+			<ol class="question-list">
+				{#each config.questions as q, i}
+					<li class="question-item">
+						<span class="q-num">{i + 1}</span>
+						<input
+							type="text"
+							value={q}
+							oninput={(e) => updateQuestion(i, (e.target as HTMLInputElement).value)}
+							placeholder="Question text…"
+							disabled={phase === 'publishing'}
+						/>
+						<button
+							class="danger-btn"
+							onclick={() => removeQuestion(i)}
+							disabled={phase === 'publishing'}
+							aria-label="Remove">✕</button
+						>
+					</li>
+				{/each}
+			</ol>
+
+			{#if config.questions.length === 0}
+				<p class="empty-hint">No questions yet.</p>
+			{/if}
+		</section>
+
+		<!-- Advanced -->
+		<section class="card">
+			<button
+				class="advanced-toggle"
+				onclick={() => (advancedOpen = !advancedOpen)}
+				disabled={phase === 'publishing'}
+			>
+				{advancedOpen ? '− Advanced options' : '+ Advanced options'}
+			</button>
+			{#if advancedOpen}
+				<div class="advanced-body">
+					<label class="adv-label">
+						<span>Relay confirmation threshold</span>
+						<p class="hint">
+							Number of relays that must accept each answer before showing a green status to
+							respondents. Default: 2.
+						</p>
+						<input
+							type="number"
+							min={1}
+							max={20}
+							value={config.confirmThreshold}
+							oninput={(e) =>
+								(config = {
+									...config,
+									confirmThreshold: Math.max(1, parseInt((e.target as HTMLInputElement).value) || 2)
+								})}
+						/>
+					</label>
+					<label class="adv-label" style="margin-top:1rem">
+						<span>Relays</span>
+						<p class="hint">One relay URL per line. Applies to all forms on this device.</p>
+						<textarea
+							rows={8}
+							bind:value={relayText}
+							onblur={applyRelays}
+							placeholder="wss://relay.example.com"
+						></textarea>
+					</label>
+				</div>
+			{/if}
+		</section>
+
+		<!-- Publish -->
+		<section class="card publish-card">
+			{#if phase === 'building'}
+				<div class="publish-row">
+					<button
+						class="primary publish-btn"
+						onclick={publish}
+						disabled={config.questions.length === 0}
+					>
+						Publish form
+					</button>
+					<p class="publish-warn">
+						Once published, the form cannot be changed. This keeps it reliable and free to host.
+					</p>
+				</div>
+				{#if config.questions.length === 0}
+					<p class="hint">Add at least one question to publish.</p>
+				{/if}
+			{:else}
+				<!-- publishing phase: relay confirmations -->
+				<h2>Publishing to relays…</h2>
 				<div class="relay-confirm-list">
 					{#each relayConfirms as r}
 						<div class="relay-confirm-row">
-							<span class="dot" class:ok={r.status === 'ok'} class:fail={r.status === 'fail'}></span>
+							<span
+								class="dot"
+								class:ok={r.status === 'ok'}
+								class:fail={r.status === 'fail'}
+								class:pending={r.status === 'pending'}
+							></span>
 							<span class="relay-url">{r.url}</span>
+							<span class="relay-status-text">
+								{#if r.status === 'ok'}✓{:else if r.status === 'fail'}✗{:else}…{/if}
+							</span>
 						</div>
 					{/each}
 				</div>
-				<button class="primary" onclick={retryPublish}>Edit and retry</button>
-			</section>
-		{/if}
+				<p class="confirm-count">
+					{acceptedCount} / {relayConfirms.length} confirmed
+					{#if acceptedCount >= MIN_CONFIRMED}
+						<span class="ok-text">— sufficient</span>
+					{/if}
+				</p>
+			{/if}
+		</section>
+	{:else if phase === 'done'}
+		<section class="card result-card">
+			<div class="result-icon">✓</div>
+			<h2>Form published</h2>
+			{#if acceptedCount < MIN_CONFIRMED}
+				<p class="warn-text">
+					Only {acceptedCount} relay{acceptedCount !== 1 ? 's' : ''} confirmed. The form may not be reachable
+					for some respondents. You can re-publish later from the admin page.
+				</p>
+			{:else}
+				<p class="hint">Confirmed on {acceptedCount} relays.</p>
+			{/if}
+			<div class="link-row">
+				<span class="link-text">{shareLink}</span>
+				<button class="primary" onclick={() => navigator.clipboard.writeText(shareLink)}>
+					Copy
+				</button>
+			</div>
+			<p class="hint">Share this link with respondents.</p>
+			<a class="primary admin-link" href={`${base}/admin#${publishedPubkey}`}>Open admin →</a>
+		</section>
+	{:else if phase === 'failed'}
+		<section class="card result-card">
+			<div class="result-icon fail-icon">✗</div>
+			<h2>Publish failed</h2>
+			<p class="error">{publishError}</p>
+			<div class="relay-confirm-list">
+				{#each relayConfirms as r}
+					<div class="relay-confirm-row">
+						<span class="dot" class:ok={r.status === 'ok'} class:fail={r.status === 'fail'}></span>
+						<span class="relay-url">{r.url}</span>
+					</div>
+				{/each}
+			</div>
+			<button class="primary" onclick={retryPublish}>Edit and retry</button>
+		</section>
+	{/if}
 </PageLayout>
 
 <style>
