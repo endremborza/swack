@@ -1,5 +1,6 @@
 {
 	"name": "swack",
+	"description": "Swiping form filler with no backend",
 	"private": true,
 	"version": "0.0.1",
 	"type": "module",
