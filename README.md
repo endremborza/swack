@@ -52,5 +52,3 @@ npm run test:e2e     # playwright
 npm run build                            # gh-pages build (base /swack)
 SWACK_BASE="" VITE_QUIZ_SLUG=he npm run build   # dedicated root-served quiz build
 ```
-
-Output goes to `build/`; it is a static site, deploy anywhere (for GitHub Pages the fallback is `404.html`). `scripts/deploy-he.sh` builds and ships the he.borza.cc deployment (static build + backend) in one step.
