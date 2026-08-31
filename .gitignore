@@ -22,3 +22,9 @@ Thumbs.db
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Quiz content (answer keys) stays off the public repo
+server/quizzes/*.json
+!server/quizzes/example.json
+server/__pycache__
+

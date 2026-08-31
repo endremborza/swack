@@ -1,0 +1,17 @@
+{
+	"name": "Example Quiz",
+	"labels": { "left": "False", "right": "True", "up": "", "down": "" },
+	"questions": [
+		{ "text": "The sky is green.", "correct": "Left" },
+		{ "text": "Water boils at 100°C at sea level.", "correct": "Right" },
+		{ "text": "This one is just an opinion poll.", "correct": null }
+	],
+	"randomizeOrder": true,
+	"nameMode": "required",
+	"namePrefill": true,
+	"namePrompt": "What's your name?",
+	"feedback": "none",
+	"leaderboard": { "topN": 3, "showPoints": false, "visibility": "done" },
+	"exportToken": "change-me-long-token",
+	"generation": 0
+}
