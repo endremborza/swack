@@ -1,64 +1,56 @@
 # Swack
 
-Zero-cost swipe surveys. Think Tinder for feedback — respondents swipe in up to four directions to answer each question. No server, no database, no cost. All responses land in a Google Sheet you own.
+Swipe surveys — think Tinder for questions. Respondents swipe in up to four directions to answer each card. Two modes share the same swipe UI:
 
-## How it works
+- **Nostr mode (zero-cost)** — fully serverless. Form config and answers travel through public Nostr relays, end-to-end encrypted; keys live in the creator's browser. No server, no database, no account.
+- **Quiz mode (self-hosted backend)** — a small Python + sqlite server holds the quiz (questions, answer key, leaderboard settings) and records every answer with a definitive ACK. Built for quizzes that must reliably work: resumable sessions, per-device dedup, configurable feedback and a leaderboard.
 
-The frontend is a static SPA. The "backend" is a Google Apps Script Web App deployed from a Google Sheet. The creator's sheet stores questions and collects answers; the app is just the UI layer.
+## Nostr mode
 
-```
-Creator                        Respondent
-  │                                │
-  ├─ clone template sheet          │
-  ├─ fill in questions/config      │
-  ├─ deploy Apps Script            │
-  ├─ paste URL → get share link ───┼──▶ /fill#<base64url>
-  │                                │
-  │                           enter name
-  │                           swipe cards
-  │                           (each swipe POSTs one answer)
-  │                                │
-  └─ open Sheet to view answers ◀──┘
+- `/create` — form builder; publishing is immutable and waits for relay confirmations before issuing a share link
+- `/admin#<pubkey>` — read-only monitor: live answers, aggregates, CSV export, relay management, credential export/import
+- `/fill#<pubkey>_<aeskey>` — the swipe interface; answers are NIP-44 encrypted to the form's pubkey and broadcast to the relay pool
+
+## Quiz mode
+
+The backend is `server/quiz_server.py` (Python stdlib only: `http.server` + `sqlite3`). Quizzes are JSON files in a directory (see `server/quizzes/example.json`); the slug is the filename stem and the answer key never leaves the server.
+
+```sh
+python3 server/quiz_server.py --quizzes server/quizzes --db data/swack.db --port 5080
 ```
 
-## Setup
+API (all JSON, same-origin `/api` in production):
 
-### 1. Clone the template
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/quiz/<slug>` | public config — questions, labels, modes; no answer key |
+| `POST /api/quiz/<slug>/answer` | record one swipe; ACK = committed to sqlite, duplicates ignored |
+| `GET /api/quiz/<slug>/session/<sid>` | answered set for resume (+ score when feedback allows) |
+| `GET /api/quiz/<slug>/leaderboard` | top-N names (+ points when configured) |
+| `GET /api/quiz/<slug>/export?token=…` | full dump, token-gated |
+| `GET /api/health` | liveness + loaded quiz slugs |
 
-Click **Get the template** on the app's landing page to copy the Google Sheet with the correct structure and Apps Script pre-installed.
+Per-quiz config: `feedback` (`none`/`instant`/`final`/`both`), `leaderboard` (`topN`, `showPoints`, `visibility`), `nameMode`, `namePrefill` (suggest a stored/random name on the naming screen, or require typing one), `namePrompt` (the naming screen's question), `randomizeOrder`, `generation`. Scores are computed at read time from the config, so fixing an answer key rescores past answers.
 
-### 2. Configure your form
+Bumping `generation` resets a quiz without losing anything: answers are stored under the generation they were played in, the leaderboard and resume queries see only the current one, and clients discard local progress when the number changes (a client mid-quiz through a reset still gets its answers saved, under its old generation). Config files are reloaded on change, so a reset is just an edit + copy — no restart.
 
-- **`Questions` tab** — add one question per row (column A, skip the header)
-- **`Config` tab** — set `formTitle` and swipe direction labels (`swipeLeftLabel`, `swipeRightLabel`, `swipeUpLabel`, `swipeDownLabel`). Leave a label blank to disable that direction.
+The frontend reaches quiz mode at `/quiz#<slug>`, or as a dedicated deployment: building with `VITE_QUIZ_SLUG=<slug>` makes the site root serve that quiz directly. Sessions persist in localStorage (resume, no repeated questions on a device); unACKed answers are retried from an outbox on return.
 
-### 3. Deploy the Apps Script
-
-1. Open **Extensions → Apps Script** in your sheet
-2. Click **Deploy → New deployment**
-3. Type: **Web app**, Execute as: **Me**, Access: **Anyone**
-4. Copy the Web App URL
-
-### 4. Generate a shareable link
-
-Paste the Web App URL into the generator on the landing page. Share the resulting link — that's it.
-
-## Running locally
+## Development
 
 ```sh
 npm install
-npm run dev
+npm run dev          # vite dev server; /api proxies to localhost:5080
+npm run test:unit    # vitest (frontend logic)
+python3 -m unittest discover -s server   # backend tests
+npm run test:e2e     # playwright
 ```
 
 ## Building
 
 ```sh
-npm run build
+npm run build                            # gh-pages build (base /swack)
+SWACK_BASE="" VITE_QUIZ_SLUG=he npm run build   # dedicated root-served quiz build
 ```
 
-Output goes to `build/`. Deploy anywhere that serves static files (GitHub Pages, Netlify, Cloudflare Pages, etc.). For GitHub Pages set the fallback to `404.html`.
-
-## Anti-abuse
-
-- Each session gets a UUID; answers are tagged with it, making duplicate detection trivial in Sheets
-- Partial responses (user drops off mid-survey) are still recorded per-question, so you know exactly where people stopped
+Output goes to `build/`; it is a static site, deploy anywhere (for GitHub Pages the fallback is `404.html`). `scripts/deploy-he.sh` builds and ships the he.borza.cc deployment (static build + backend) in one step.
