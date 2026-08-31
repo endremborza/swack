@@ -26,6 +26,13 @@ export const DEFAULT_CONFIG: FormConfig = {
 
 export type SwipeDirection = 'Left' | 'Right' | 'Up' | 'Down';
 
+export interface DirectionLabels {
+	left: string;
+	right: string;
+	up: string;
+	down: string;
+}
+
 export interface SwipeAnswer {
 	sessionId: string;
 	name: string;

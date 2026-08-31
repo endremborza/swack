@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { onMount, onDestroy } from 'svelte';
-	import { Spring } from 'svelte/motion';
+	import SwipeDeck from '$lib/components/SwipeDeck.svelte';
+	import StatusToast from '$lib/components/StatusToast.svelte';
 	import { NostrPool, generateKeypair } from '$lib/nostr';
 	import { decryptConfig } from '$lib/crypto';
 	import { randomName } from '$lib/names';
@@ -36,9 +37,6 @@
 	// displayOrder[i] = index into config.questions for the i-th card shown
 	let displayOrder: number[] = $state([]);
 	let currentIndex = $state(0);
-	let cardShown = $state(true);
-	let swipeDir: SwipeDirection | null = $state(null);
-	let hintVisible = $state(true);
 
 	let name = $state(initName());
 	let editingName = $state(false);
@@ -58,30 +56,6 @@
 	let configAesKey = '';
 	let pool: NostrPool | null = null;
 
-	const motion = new Spring(
-		{ x: 0, y: 0, rotation: 0, opacity: 1 },
-		{ stiffness: 0.4, damping: 0.8 }
-	);
-
-	let dragStartX = 0;
-	let dragStartY = 0;
-	let dragging = false;
-
-	const SWIPE_THRESHOLD = 90;
-	const FLY = 1100;
-	const HL_DIV = 140;
-	const MAX_HL = 0.8;
-
-	function isEnabled(dir: SwipeDirection): boolean {
-		const labels: Record<SwipeDirection, string> = {
-			Left: config.swipeLeftLabel,
-			Right: config.swipeRightLabel,
-			Up: config.swipeUpLabel,
-			Down: config.swipeDownLabel
-		};
-		return labels[dir] !== '';
-	}
-
 	onMount(() => {
 		const hash = window.location.hash.slice(1);
 		const parts = hash.split('_');
@@ -93,17 +67,7 @@
 		serverPubkey = parts[0];
 		configAesKey = parts.slice(1).join('_');
 
-		window.addEventListener('keydown', handleKeyDown);
-		window.addEventListener('mousemove', handleMouseMove);
-		window.addEventListener('mouseup', handleMouseUp);
-
 		loadForm();
-
-		return () => {
-			window.removeEventListener('keydown', handleKeyDown);
-			window.removeEventListener('mousemove', handleMouseMove);
-			window.removeEventListener('mouseup', handleMouseUp);
-		};
 	});
 
 	onDestroy(() => {
@@ -210,7 +174,6 @@
 		const indices = config.questions.map((_, i) => i);
 		displayOrder = config.randomizeOrder ? shuffled(indices) : indices;
 		currentIndex = 0;
-		cardShown = true;
 		if (config.nameMode === 'required') {
 			nameInput = name;
 			phase = 'naming';
@@ -239,35 +202,6 @@
 	function startEditingName() {
 		nameInput = name;
 		editingName = true;
-	}
-
-	function directionFromOffset(dx: number, dy: number): SwipeDirection | null {
-		const ax = Math.abs(dx);
-		const ay = Math.abs(dy);
-		if (ax < SWIPE_THRESHOLD && ay < SWIPE_THRESHOLD) return null;
-		if (ax >= ay) {
-			if (dx > 0 && isEnabled('Right')) return 'Right';
-			if (dx < 0 && isEnabled('Left')) return 'Left';
-			return null;
-		}
-		if (dy > 0 && isEnabled('Down')) return 'Down';
-		if (dy < 0 && isEnabled('Up')) return 'Up';
-		return null;
-	}
-
-	function highlightFor(dir: SwipeDirection | null): {
-		left: number;
-		right: number;
-		up: number;
-		down: number;
-	} {
-		const mk = (d: SwipeDirection) => {
-			const { x, y } = motion.current;
-			if (dir !== d) return 0;
-			if (d === 'Left' || d === 'Right') return Math.min(Math.abs(x) / HL_DIV, MAX_HL);
-			return Math.min(Math.abs(y) / HL_DIV, MAX_HL);
-		};
-		return { left: mk('Left'), right: mk('Right'), up: mk('Up'), down: mk('Down') };
 	}
 
 	function fetchAggregate() {
@@ -302,25 +236,13 @@
 		}
 	}
 
-	async function swipe(dir: SwipeDirection) {
-		if (!cardShown || phase !== 'surveying' || !isEnabled(dir)) return;
-		hintVisible = false;
-		swipeDir = dir;
+	function handleSwipe(dir: SwipeDirection) {
+		if (phase !== 'surveying') return;
+		const qIndex = displayOrder[currentIndex] ?? currentIndex;
 
-		const targets: Record<SwipeDirection, { x: number; y: number; rotation: number }> = {
-			Left: { x: -FLY, y: 0, rotation: -20 },
-			Right: { x: FLY, y: 0, rotation: 20 },
-			Up: { x: 0, y: -FLY, rotation: 0 },
-			Down: { x: 0, y: FLY, rotation: 0 }
-		};
-
-		const { x, y, rotation } = targets[dir];
-		motion.set({ x, y, rotation, opacity: 0 });
-		cardShown = false;
-
-		// Fire-and-forget: submit runs in background, animation advances independently
-		void submitAnswer(dir);
-		localAnswers.push({ qIndex: displayOrder[currentIndex] ?? currentIndex, answer: dir });
+		// Fire-and-forget: submit runs in background, the deck advances independently
+		void submitAnswer(qIndex, dir);
+		localAnswers.push({ qIndex, answer: dir });
 
 		if (currentIndex + 1 >= config.questions.length) {
 			setTimeout(() => {
@@ -333,21 +255,15 @@
 			}, 400);
 			return;
 		}
-
-		setTimeout(() => {
-			currentIndex++;
-			motion.set({ x: 0, y: 0, rotation: 0, opacity: 1 }, { hard: true });
-			swipeDir = null;
-			cardShown = true;
-		}, 400);
+		currentIndex++;
 	}
 
-	async function submitAnswer(answer: SwipeDirection) {
+	async function submitAnswer(qIndex: number, answer: SwipeDirection) {
 		if (!pool) return;
 		const payload = JSON.stringify({
 			sessionId,
 			name,
-			qIndex: displayOrder[currentIndex] ?? currentIndex,
+			qIndex,
 			answer,
 			timestamp: Date.now()
 		});
@@ -378,74 +294,12 @@
 		}
 	}
 
-	function handleKeyDown(e: KeyboardEvent) {
-		if (editingName) return;
-		const map: Record<string, SwipeDirection> = {
-			ArrowLeft: 'Left',
-			a: 'Left',
-			ArrowRight: 'Right',
-			d: 'Right',
-			ArrowUp: 'Up',
-			w: 'Up',
-			ArrowDown: 'Down',
-			s: 'Down'
-		};
-		const dir = map[e.key];
-		if (dir) swipe(dir);
-	}
-
-	function applyDragOffset(dx: number, dy: number) {
-		motion.set({ x: dx, y: dy, rotation: dx * 0.08, opacity: 1 });
-		swipeDir = directionFromOffset(dx, dy);
-	}
-
-	function finishDrag(dx: number, dy: number) {
-		dragging = false;
-		const dir = directionFromOffset(dx, dy);
-		if (dir) {
-			swipe(dir);
-		} else {
-			motion.set({ x: 0, y: 0, rotation: 0, opacity: 1 });
-			swipeDir = null;
-		}
-	}
-
-	function handleMouseDown(e: MouseEvent) {
-		dragStartX = e.clientX;
-		dragStartY = e.clientY;
-		dragging = true;
-	}
-
-	function handleMouseMove(e: MouseEvent) {
-		if (!dragging) return;
-		applyDragOffset(e.clientX - dragStartX, e.clientY - dragStartY);
-	}
-
-	function handleMouseUp(e: MouseEvent) {
-		if (!dragging) return;
-		finishDrag(e.clientX - dragStartX, e.clientY - dragStartY);
-	}
-
-	function handleTouchStart(e: TouchEvent) {
-		const t = e.touches[0];
-		dragStartX = t.clientX;
-		dragStartY = t.clientY;
-		dragging = true;
-	}
-
-	function handleTouchMove(e: TouchEvent) {
-		if (!dragging) return;
-		const t = e.touches[0];
-		applyDragOffset(t.clientX - dragStartX, t.clientY - dragStartY);
-	}
-
-	function handleTouchEnd(e: TouchEvent) {
-		if (!dragging) return;
-		const t = e.changedTouches[0];
-		finishDrag(t.clientX - dragStartX, t.clientY - dragStartY);
-	}
-
-	const hl = $derived(highlightFor(swipeDir));
+	const deckLabels = $derived({
+		left: config.swipeLeftLabel,
+		right: config.swipeRightLabel,
+		up: config.swipeUpLabel,
+		down: config.swipeDownLabel
+	});
 </script>
 
 <svelte:head>
@@ -571,107 +425,23 @@
 				</div>
 			{/if}
 
-			<!-- Direction labels (appear during swipe) -->
-			{#if isEnabled('Left')}
-				<div class="label left" style="opacity: {hl.left}">{config.swipeLeftLabel}</div>
-			{/if}
-			{#if isEnabled('Right')}
-				<div class="label right" style="opacity: {hl.right}">{config.swipeRightLabel}</div>
-			{/if}
-			{#if isEnabled('Up')}
-				<div class="label up" style="opacity: {hl.up}">{config.swipeUpLabel}</div>
-			{/if}
-			{#if isEnabled('Down')}
-				<div class="label down" style="opacity: {hl.down}">{config.swipeDownLabel}</div>
-			{/if}
-
-			<!-- Direction buttons (always visible, positionally placed) -->
-			{#if isEnabled('Up')}
-				<button class="btn-dir btn-up" onclick={() => swipe('Up')}>
-					↑ {config.swipeUpLabel}
-				</button>
-			{/if}
-			{#if isEnabled('Left')}
-				<button class="btn-dir btn-left" onclick={() => swipe('Left')}>
-					{config.swipeLeftLabel}
-				</button>
-			{/if}
-			{#if isEnabled('Right')}
-				<button class="btn-dir btn-right" onclick={() => swipe('Right')}>
-					{config.swipeRightLabel}
-				</button>
-			{/if}
-			{#if isEnabled('Down')}
-				<button class="btn-dir btn-down" onclick={() => swipe('Down')}>
-					↓ {config.swipeDownLabel}
-				</button>
-			{/if}
-
-			<div class="card-area">
-				{#if cardShown}
-					<div
-						class="card"
-						style="transform: translate({motion.current.x}px, {motion.current.y}px) rotate({motion
-							.current.rotation}deg); opacity: {motion.current.opacity};"
-						onmousedown={handleMouseDown}
-						ontouchstart={handleTouchStart}
-						ontouchmove={handleTouchMove}
-						ontouchend={handleTouchEnd}
-						role="button"
-						tabindex="0"
-					>
-						<!-- stamp overlays -->
-						{#if swipeDir === 'Right'}
-							<div class="stamp stamp-yes" style="opacity: {hl.right}">
-								{config.swipeRightLabel}
-							</div>
-						{:else if swipeDir === 'Left'}
-							<div class="stamp stamp-no" style="opacity: {hl.left}">{config.swipeLeftLabel}</div>
-						{:else if swipeDir === 'Up'}
-							<div class="stamp stamp-up" style="opacity: {hl.up}">{config.swipeUpLabel}</div>
-						{:else if swipeDir === 'Down'}
-							<div class="stamp stamp-down" style="opacity: {hl.down}">
-								{config.swipeDownLabel}
-							</div>
-						{/if}
-
-						<p class="question">{config.questions[displayOrder[currentIndex] ?? currentIndex]}</p>
-
-						{#if hintVisible}
-							<p class="hint">Swipe or use arrow keys</p>
-						{/if}
-					</div>
-				{/if}
-			</div>
-
-			<div class="progress">
-				{currentIndex + 1} / {config.questions.length}
-			</div>
+			<SwipeDeck
+				labels={deckLabels}
+				question={config.questions[displayOrder[currentIndex] ?? currentIndex]}
+				index={currentIndex}
+				total={config.questions.length}
+				onSwipe={handleSwipe}
+			/>
 		</div>
 
-		<!-- Answer status toast -->
 		{#if answerToast}
-			<div
-				class="answer-toast"
-				class:toast-ok={answerToast.status === 'ok'}
-				class:toast-partial={answerToast.status === 'partial'}
-				class:toast-failed={answerToast.status === 'failed'}
-			>
-				{#if answerToast.status === 'ok'}
-					✓ Recorded
-				{:else if answerToast.status === 'partial'}
-					⚠ Partially recorded
-				{:else}
-					Connection issue — answer may not have been sent
-					<button class="retry-btn" onclick={answerToast.retry}>Retry</button>
-					<button
-						class="dismiss-btn"
-						onclick={() => {
-							answerToast = null;
-						}}>Dismiss</button
-					>
-				{/if}
-			</div>
+			<StatusToast
+				status={answerToast.status}
+				retry={answerToast.status === 'failed' ? answerToast.retry : undefined}
+				onDismiss={() => {
+					answerToast = null;
+				}}
+			/>
 		{/if}
 	{/if}
 </div>
@@ -831,252 +601,12 @@
 		border-radius: 4px;
 	}
 
-	/* Direction labels (swipe feedback) */
-	.label {
-		position: absolute;
-		font-size: 1.25rem;
-		font-weight: 700;
-		text-transform: uppercase;
-		letter-spacing: 0.1em;
-		pointer-events: none;
-		transition: opacity 0.1s;
-		z-index: 5;
-	}
-
-	.label.left {
-		left: 5rem;
-		top: 50%;
-		transform: translateY(-50%);
-		color: var(--danger);
-	}
-
-	.label.right {
-		right: 5rem;
-		top: 50%;
-		transform: translateY(-50%);
-		color: var(--success);
-	}
-
-	.label.up {
-		top: 5rem;
-		left: 50%;
-		transform: translateX(-50%);
-		color: var(--info);
-	}
-
-	.label.down {
-		bottom: 5rem;
-		left: 50%;
-		transform: translateX(-50%);
-		color: var(--warning);
-	}
-
-	/* Directional action buttons */
-	.btn-dir {
-		position: absolute;
-		font-size: 0.8rem;
-		font-weight: 700;
-		padding: 0.45rem 0.9rem;
-		border-radius: 8px;
-		background: var(--surface2);
-		border: 1px solid var(--border);
-		cursor: pointer;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		z-index: 2;
-		transition: background 0.15s;
-		white-space: nowrap;
-	}
-
-	.btn-dir:hover {
-		background: var(--surface);
-	}
-
-	.btn-up {
-		top: 1rem;
-		left: 50%;
-		transform: translateX(-50%);
-		color: var(--info);
-		border-color: color-mix(in srgb, var(--info) 40%, var(--border));
-	}
-
-	.btn-down {
-		bottom: 1rem;
-		left: 50%;
-		transform: translateX(-50%);
-		color: var(--warning);
-		border-color: color-mix(in srgb, var(--warning) 40%, var(--border));
-	}
-
-	.btn-left {
-		left: 0.4rem;
-		top: 50%;
-		transform: translateY(-50%);
-		color: var(--danger);
-		border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
-		max-width: 62px;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-
-	.btn-right {
-		right: 0.4rem;
-		top: 50%;
-		transform: translateY(-50%);
-		color: var(--success);
-		border-color: color-mix(in srgb, var(--success) 40%, var(--border));
-		max-width: 62px;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-
-	/* Card area */
-	.card-area {
-		position: relative;
-		width: 100%;
-		padding: 0 5rem;
-		height: 340px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-	}
-
-	.card {
-		position: absolute;
-		width: calc(100% - 10rem);
-		max-width: 320px;
-		min-height: 220px;
-		background: var(--surface);
-		border: 1px solid var(--border);
-		border-radius: 16px;
-		padding: 2rem;
-		cursor: grab;
-		touch-action: none;
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		text-align: center;
-		box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-	}
-
-	.card:active {
-		cursor: grabbing;
-	}
-
-	.question {
-		font-size: 1.2rem;
-		font-weight: 500;
-		line-height: 1.5;
-		margin: 0 0 1rem;
-	}
-
-	.hint {
-		font-size: 0.8125rem;
-		color: var(--text-muted);
-		margin: 0;
-	}
-
-	.stamp {
-		position: absolute;
-		top: 1rem;
-		padding: 0.25rem 0.75rem;
-		border-radius: 4px;
-		font-size: 1rem;
-		font-weight: 800;
-		text-transform: uppercase;
-		letter-spacing: 0.1em;
-		pointer-events: none;
-	}
-
-	.stamp-yes {
-		right: 1rem;
-		color: var(--success);
-		border: 3px solid var(--success);
-		transform: rotate(15deg);
-	}
-
-	.stamp-no {
-		left: 1rem;
-		color: var(--danger);
-		border: 3px solid var(--danger);
-		transform: rotate(-15deg);
-	}
-
-	.stamp-up {
-		top: 1rem;
-		left: 50%;
-		transform: translateX(-50%);
-		color: var(--info);
-		border: 3px solid var(--info);
-	}
-
-	.stamp-down {
-		bottom: 1rem;
-		top: auto;
-		left: 50%;
-		transform: translateX(-50%);
-		color: var(--warning);
-		border: 3px solid var(--warning);
-	}
-
-	.progress {
-		font-size: 0.8125rem;
-		color: var(--text-muted);
-		margin-top: 1rem;
-	}
-
 	.relay-hint {
 		display: block;
 		font-size: 0.75rem;
 		color: var(--text-muted);
 		margin-top: 0.4rem;
 		opacity: 0.6;
-	}
-
-	.answer-toast {
-		position: fixed;
-		bottom: 1.5rem;
-		left: 50%;
-		transform: translateX(-50%);
-		padding: 0.5rem 1rem;
-		border-radius: 8px;
-		font-size: 0.8125rem;
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		z-index: 100;
-		max-width: calc(100vw - 2rem);
-		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
-	}
-
-	.toast-ok {
-		background: color-mix(in srgb, var(--success) 15%, var(--surface));
-		border: 1px solid color-mix(in srgb, var(--success) 40%, var(--border));
-		color: var(--success);
-	}
-
-	.toast-partial {
-		background: color-mix(in srgb, var(--warning) 15%, var(--surface));
-		border: 1px solid color-mix(in srgb, var(--warning) 40%, var(--border));
-		color: var(--warning);
-	}
-
-	.toast-failed {
-		background: color-mix(in srgb, var(--danger) 15%, var(--surface));
-		border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--border));
-		color: var(--danger);
-	}
-
-	.retry-btn,
-	.dismiss-btn {
-		background: none;
-		border: 1px solid currentColor;
-		color: inherit;
-		font-size: 0.75rem;
-		padding: 0.2rem 0.5rem;
-		border-radius: 4px;
-		cursor: pointer;
 	}
 
 	.naming-box {
@@ -1114,13 +644,6 @@
 		width: 100%;
 		font-size: 1rem;
 		padding: 0.65rem 1.5rem;
-	}
-
-	.resume-btns {
-		display: flex;
-		gap: 0.75rem;
-		justify-content: center;
-		margin-bottom: 0.5rem;
 	}
 
 	.review-list {
