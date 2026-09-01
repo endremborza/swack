@@ -6,7 +6,10 @@ const config = {
 	preprocess: vitePreprocess(),
 	kit: {
 		adapter: adapter({ fallback: '404.html' }),
-		paths: { base: process.env.NODE_ENV === 'production' ? '/swack' : '' }
+		// SWACK_BASE overrides the gh-pages default for root-served deployments
+		paths: {
+			base: process.env.SWACK_BASE ?? (process.env.NODE_ENV === 'production' ? '/swack' : '')
+		}
 	}
 };
 
